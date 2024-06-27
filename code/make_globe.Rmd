@@ -1,0 +1,80 @@
+ ---
+title: "Make a globe"
+author: "Ben Cresswell"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: 
+ html_document:
+    code_folding: show
+    collapse: no
+    df_print: paged
+    fig_caption: yes
+    fig_height: 4
+    fig_width: 4
+    highlight: textmate
+    theme: spacelab
+    toc: yes
+    toc_float: yes
+editor_options: 
+  chunk_output_type: inline
+---
+
+From : https://stackoverflow.com/questions/70756215/plot-geodata-on-the-globe-perspective-in-r
+with some extra tips from https://gist.github.com/rafapereirabr/26965dd851debad32ad2e659024ba451
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+options(knitr.duplicate.label = 'allow')
+#rm(list=ls())
+getwd()
+```
+
+```{r}
+library(sf)
+library(giscoR) # for the countries dataset only
+```
+
+```{r}
+# projection string used for the polygons & ocean background
+crs_string <- "+proj=ortho +lon_0=145 +lat_0=-10"
+
+# background for the globe - center buffered by earth radius
+ocean <- st_point(x = c(0,0)) %>%
+  st_buffer(dist = 6371000) %>%
+  st_sfc(crs = crs_string)
+
+# country polygons, cut to size
+world <- gisco_countries %>% 
+  #st_intersection(ocean %>% st_transform(4326)) %>% # select visible area only
+  st_transform(crs = crs_string) # reproject to ortho
+
+# Set up study area box
+study_box <- data.frame(name = "study_box", long = 147, lat = -16) %>%
+  st_as_sf(coords = c("long", "lat"), crs = 4326) %>% 
+  st_transform(crs = crs_string)
+
+
+
+# If you want to colour a country in (e.g. red)
+world$fill_color <- ifelse(world$ISO3_CODE == "AUS", "interesting", "dull")
+   
+# Plot
+globe <- 
+ggplot(data = world) +
+  geom_sf(data = ocean, fill = "grey90") + # background first
+  geom_sf(aes(fill = fill_color), colour = NA) + # now land over the oceans
+  #geom_sf(data = ocean, fill = "transparent", color = "black", lwd = 0.5) + # background first
+  geom_rect(aes(xmin = 143.5, xmax = 147.9, ymin = -16.1, ymax = -13.4), color = "red", fill = NA) +
+  scale_fill_manual(values = c("interesting" = "grey40","dull" = "grey60"), guide = "none") +
+  coord_sf() +
+  theme_void()
+globe
+```
+
+
+
+
+
+
+
+
+

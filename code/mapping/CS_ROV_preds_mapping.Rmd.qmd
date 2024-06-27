@@ -1,0 +1,189 @@
+---
+title: " Mapping CSMP Overview"
+author: "Ben Cresswell"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: 
+ html_document:
+    code_folding: show
+    collapse: no
+    df_print: paged
+    fig_caption: yes
+    #fig_height: 
+    fig_width: 140/25.4
+    highlight: textmate
+    theme: spacelab
+    toc: yes
+    toc_float: yes
+editor_options: 
+  chunk_output_type: inline
+---
+## Created: 3rd Oct 2023 BJC ##
+
+
+
+```{r setup, include=FALSE}
+# Set options, housekeeping
+knitr::opts_chunk$set(
+	echo = FALSE,
+	include = TRUE,
+	message = FALSE,
+	warning = FALSE)
+#rm(list=ls()) # Clear out environment if necessary
+```
+
+
+
+# Load required packages
+```{r packages, message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
+source('code/packages.R')
+library(sf)
+library(rio)
+library(ggsn)
+
+```
+
+
+
+
+
+
+
+# First need a base map of the coastal area
+
+## Load Australia map object from ggplot's world map
+Note: could use whole world map but the file will be 50 x smaller if we filter now (0.1 vs ~5MB), and thus quicker to plot and work with
+```{r world-map-load}
+aus <- map_data("world") %>% 
+  filter(region == 'Australia')
+```
+
+# Load reef labels
+```{r}
+reef_labels <- 
+  read_csv("data/reef_locs.csv")
+```
+
+
+# Add globe and scale bar
+```{r}
+sourceRmd::sourceRmd("code/make_globe.Rmd")
+```
+
+## Load in shape files 
+Need to have the .shp and the .shx file in the same folder
+# CS
+```{r load-shp-sf, message=FALSE, warning=FALSE}
+cs_dryreef <- read_sf("data/3dgbr_geomorph/shape/coralsea_dryreef.shp")
+cs_reef <- read_sf("data/3dgbr_geomorph/shape/coralsea_reef.shp")
+cs_cays <- read_sf("data/3dgbr_geomorph/shape/coralsea_cay.shp")
+```
+
+# GBR
+```{r}
+gbr_feats <- st_read("data/3dgbr_geomorph/shape/gbr_features.shp")
+gbr_shelf <- st_read("data/3dgbr_geomorph/shape/gbr_shelf.shp") # Don't need to filter as the file is already as small as it can be
+```
+## Basic map trimmed down to just GBR and Coral Sea area
+- Could specify detailed aes here but will save that step for the final maps to keep this early code easy to follow
+```{r}
+raw_map <- 
+  aus %>% 
+  ggplot() +
+  geom_sf(data = gbr_feats, fill = 'grey60', colour = "transparent", size = .001) +
+  geom_polygon(aes(x = long, y = lat, group = group), fill = "grey40", colour = 'black', linewidth = 0.3) +
+  coord_sf(ylim = c(-23, -9.5), xlim = c(143, 170)) 
+print(raw_map)
+```
+
+## Whole CSMP general area
+```{r}
+#overview_map <- 
+raw_map +
+  #geom_sf(data = cs_reef, fill = 'gray85', colour = 'black', size = 0.1) + # Can use fill = on polygon but not path
+  geom_sf(data = cs_dryreef, fill = 'gray60', size = 0.1) +
+  geom_sf(data = cs_cays, fill = 'black', colour = 'black', size = 0.1) +
+  geom_point(data = reef_locs, mapping = aes(x = Site_long, y = Site_lat)) +
+  coord_sf(ylim = c(-23, -9.5), xlim = c(143, 157)) +
+       theme(axis.title = element_blank(), 
+        #axis.text = element_blank(),
+        #axis.ticks = element_blank(),
+        #panel.grid = element_line(colour = "#ECEFF1"),
+        panel.border = element_rect(colour = "black", fill = "transparent"),
+        panel.background = element_rect(fill = "transparent"),
+        plot.background = element_rect(fill = "transparent", colour = "transparent"))
+```
+
+
+
+# Add detail to base map
+```{r}
+base_map <- 
+  raw_map +
+  geom_sf(data = cs_dryreef, fill = 'gray60', size = 0.1) +
+  geom_sf(data = cs_cays, fill = 'black', colour = 'black', size = 0.1) +
+  geom_segment(data = reef_labels, mapping = aes(x = Site_long, xend = Label_long, y = Site_lat, yend = Label_lat)) +
+  geom_point(data = reef_labels, mapping = aes(x = Label_long, y = Label_lat, group = Region, fill = Region, shape = Region), size = 6) +
+  geom_text(data = reef_labels, mapping = aes(x = Label_long, y = Label_lat, label = Abbr, group = Region, shape = Region), family = "Arial", size = 3) +
+  scale_shape_manual(values = c(21,22,23,24)) +
+  coord_sf(ylim = c(-23, -9.5), xlim = c(143, 157)) +
+       theme(axis.title = element_blank(),
+             #axis.text = element_blank(),
+             #axis.ticks = element_blank(),
+             #panel.grid = element_line(colour = "#ECEFF1"),
+             panel.border = element_rect(colour = "black", fill = "transparent"),
+             panel.background = element_rect(fill = "transparent"),
+             plot.background = element_rect(fill = "transparent", colour = "transparent"))
+
+base_map
+```
+
+
+
+
+
+
+
+
+```{r fig.width= 160/25.4, fig.height=160/25.4}
+reef_map <- base_map +
+  annotation_custom(ggplotGrob(globe), xmin = 143, xmax = 147, ymin = -23, ymax = -19) +
+  scalebar(x.min = 150, x.max = 154, y.min = -10, y.max = -9, dist = 250, dist_unit = "km", transform = TRUE, model = "WGS84", # Geo properties - the xmax and ymax don't do anything
+          # location = 'bottomright', anchor = c(x = 149, y = -18.1),                                # Position of bar
+           family = "Arial", st.size = 3, st.dist = 0.3,                                            # Text properties
+           border.size = 0.3, height = 0.2, st.bottom = TRUE) +                                     # Bar properties
+  cowplot::draw_image('data/North_Pointer.jpg', x = 156, y = -11, scale = 1.6, hjust = 0.5) +
+#  annotation_custom(ggplotGrob(globe), xmin = 146, xmax = 148, ymin = -16, ymax = -14.5) 
+  geom_rect(aes( xmin = 144.9, xmax = 145.3, ymin = -21.45, ymax = -21), linewidth = 0.01, color = "red", fill = NA) +
+    guides(fill = "none", shape = "none") +
+  theme_bjc()
+reef_map
+```
+
+
+
+
+
+
+```{r}
+ggsave(filename = "output/reef_map.pdf", plot = reef_map, height = 160, width = 160, device = cairo_pdf, units = "mm", dpi = 300)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
