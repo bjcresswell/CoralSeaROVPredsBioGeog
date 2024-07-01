@@ -1,0 +1,218 @@
+---
+title: "boral modelling predator assemblage: LV only"
+author: "Ben Cresswell"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: 
+ html_document:
+    code_folding: show
+    collapse: no
+    df_print: paged
+    fig_caption: yes
+    fig_height: 6
+    fig_width: 10
+    highlight: textmate
+    theme: spacelab
+    toc: yes
+    toc_float: yes
+editor_options: 
+  chunk_output_type: inline
+---
+
+
+
+```{r setup, include=FALSE}
+# Set options, housekeeping
+knitr::opts_chunk$set(
+	echo = FALSE,
+	include = TRUE,
+	message = FALSE,
+	warning = FALSE)
+#rm(list=ls()) # Clear out environment if necessary
+```
+
+
+# Prerequisites
+```{r message=FALSE, warning=FALSE, include=FALSE}
+source("code/packages.R")
+source("code/extras.R")
+load("data/Rdata/preds.Rdata")
+library(boral)
+library(ggboral)
+```
+
+
+## Summarise species counts
+```{r}
+boral_speccount_SD <- 
+  preds |> 
+  group_by(Region, Reef_1, Site, Depth, Site_Depth, dCT, Binomial) |> 
+  dplyr::summarise(Count=sum(Number)) |> 
+  ungroup()
+```
+
+
+## Convert into "wide" format diversity matrix - this is going to be our y variable
+```{r}
+boral_abund_SD <- 
+  boral_speccount_SD |> 
+  pivot_wider(names_from = Binomial, values_from=Count, values_fill = 0) |> 
+  dplyr::select(!`NA`) |>  # Get rid of column where the sp name ('Binomial') had been NA
+  ungroup()
+```
+
+
+# And convert into matrix
+```{r}
+boral_matrix_SD <- 
+  boral_abund_SD |> 
+  select(!c(Region, Reef_1, Site, Depth, Site_Depth, dCT)) |> 
+  as.matrix()
+```
+
+## Store list of predictors - this is going to be our x variable
+At depth_site pooling
+```{r}
+env_boral_SD <- 
+  preds |> 
+  select(Region, Reef_1, Site,
+         Reef_1_Area, Reef_100, Reef_size,
+         Depth, Site_Depth,
+         dCT, dGBR
+         ) |> 
+  distinct() |> 
+  as.data.frame() |> 
+  mutate(Region = fct_relevel(Region, "Central"))
+```
+
+
+# Set mcmc control parameters
+```{r}
+mcmc.control. <- list(n.burnin = 1000,
+                      n.iteration = 7000,
+                      n.thin = 30,
+                      seed = 123)
+```
+
+
+# Fit model
+We can construct a latent variable only model, with no env predictors involved, which will allow us to construct an ordination:
+```{r}
+#boral_sd_nb1 <- boral(boral_matrix_SD, family="negative.binomial",
+#                   mcmc.control = mcmc.control.,
+#                   lv.control = list(num.lv = 2))
+
+#save(boral_sd_nb1, file = "data/Rdata/boral_sd_nb1.rda")
+load(file = "data/Rdata/boral_sd_nb1.rda")
+```
+
+
+# Model diagnostics
+
+# Residuals
+```{r}
+plot(boral_sd_nb1)
+```
+
+# Chain convergence 
+Via geweke diagnostics
+```{r}
+# Raw geweke diagnostics
+boral_sd_nb1$geweke.diag
+geweke.plot(boral_sd_nb1$jags.model)
+geweke.diag(get.mcmcsamples(boral_sd_nb1))
+get.mcmcsamples(boral_sd_nb1) %>% geweke.plot()
+
+# Adjusted for multiple comparisons
+gew.pvals <- 2*pnorm(abs(unlist(boral_sd_nb1$geweke.diag[[1]])), lower.tail = FALSE)
+p.adjust(gew.pvals, method = "holm")
+```
+
+
+# Model investigation
+Doesn't really have anything in here as it is just the latent variables behind this model fit (unconstrained)
+```{r}
+#tidyboral(boral_sd_nb1)
+#attributes(boral_sd_nb1)
+```
+
+
+# From this model we can make a basic (horrible) biplot:
+```{r}
+lvsplot(boral_sd_nb1, cex = 0.8)
+```
+
+# Or with species names removed
+```{r}
+lvsplot(boral_sd_nb1, cex = 0.8, biplot = FALSE)
+```
+
+# For (slightly) better plotting we can use ggboral:
+Compare to native plot
+```{r}
+gg_lvsplot(boral_sd_nb1, include = "both")
+lvsplot(boral_sd_nb1, cex = 0.8)
+```
+Matches up well
+
+# Can also "hack" ggboral to extract site and species scores:
+First need to make the plots:
+```{r}
+sites_plot <- gg_lvsplot(boral_sd_nb1, include = "objects")
+species_plot <- gg_lvsplot(boral_sd_nb1, include = "attributes")
+```
+
+# Compare to native plot
+```{r}
+species_plot
+sites_plot
+lvsplot(boral_sd_nb1, cex = 0.8, biplot = FALSE)
+```
+
+# Extract scores
+Species scores
+```{r}
+spec_scores <- species_plot$data
+```
+
+
+
+
+```{r}
+site_scores <- sites_plot$data %>% 
+  bind_cols(env_boral_SD)
+```
+
+
+
+#
+
+```{r}
+ggplot(site_scores, aes(x = lv1, y = lv2)) +
+  geom_point(aes(colour = Region)) +
+  ggforce::geom_mark_hull(aes(colour = Region),expand=0.02, concavity = 5) + 
+  geom_point(data = spec_scores) +
+  theme_minimal() +
+  facet_wrap(~ Region)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+## More info ##
+https://rpubs.com/brouwern/boralnotes

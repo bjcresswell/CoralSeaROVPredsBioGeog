@@ -1,0 +1,277 @@
+---
+title: "Abundance ~ biogeographic model fit"
+author: "Ben Cresswell"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: 
+ html_document:
+    code_folding: show
+    collapse: no
+    df_print: paged
+    fig_caption: yes
+    #fig_height: 
+    fig_width: 140/25.4
+    highlight: textmate
+    theme: spacelab
+    toc: yes
+    toc_float: yes
+editor_options: 
+  chunk_output_type: inline
+---
+
+
+```{r setup, include=FALSE}
+# Set options, housekeeping
+knitr::opts_chunk$set(
+	echo = FALSE,
+	include = TRUE,
+	message = FALSE,
+	warning = FALSE)
+#rm(list=ls()) # Clear out environment if necessary
+```
+
+
+
+# Load predsum data
+```{r message=FALSE, warning=FALSE, include=FALSE}
+source("code/packages.R")
+#sourceRmd("code/abundance/diw_abund.Rmd")
+load("data/Rdata/predsum.Rdata")
+```
+
+# Check
+```{r}
+head(predsum)
+```
+
+
+# Introduction
+Predator abundance is modeled against the main isolation-type metrics in a separate document (abun_isol_brm.Rmd). We have a number of other variables that we might expect to explain some of the other variability in abundance. These are mainly geographic and candidate variables are as follows:
+
+-------------         ------------------------------------------------------------------------------
+## DEPTH ##
+**Depth_m**           Depth as continuous variable
+**Depth_bin**         Ordered 10 level variable - 10m depth bins
+**Depth_bin_meso**    3 factor categorical variable - depth bins by photic zone. NOTE: This factor has now ALSO been recoded as **'Depth'**
+
+## BIOGEOGRAPHIC ##
+**Site_lat**          Continuous variable - distance from equator in ° latitude - not very useful. Could instead use:
+**dCT**               Continuous variable - distance from Coral Triangle in km. More usable.
+**Site_long**         Continuous variable - distance from UTC in ° long - also not very useful. Could instead use:
+**dGBR**              Continuous variable - distance from GBR shelf in km. More usable.
+**Region**            4 factor categorical variable - Coral Sea region, Far North, North, Central, South. Could be used instead of any of the above
+
+-------------     ------------------------------------------------------------------------------
+
+
+
+## Of these we'll start with:
+- Depth
+- dCT
+- dGBR
+
+# Check multicolinearity and distribution of predictors
+```{r message=FALSE, warning=FALSE, include=FALSE}
+car::scatterplotMatrix(~ No_Preds + dCT + dGBR + Depth_bin + Depth, data = predsum, diagonal = list(method = 'boxplot'))
+```
+
+```{r}
+predsum |> 
+  ggplot() +
+  #geom_histogram(aes(x = dGBR))
+  geom_histogram(aes(x = dCT))
+
+```
+
+
+
+# Set model formula
+```{r}
+abun_biogeo_form <- bf(No_Preds ~ Depth*scale(dCT) + Depth*scale(dGBR) + (1|Site), zi ~ 1, family = zero_inflated_negbinomial(link = "log"))
+```
+
+## Check what priors we need to estimate
+```{r}
+get_prior(abun_biogeo_form, data = predsum)
+```
+
+
+## Set priors (start with the same as the isol model)
+```{r}
+abun_biogeo_priors <-  
+  prior(normal(1.5, 2), class = 'Intercept') +
+  prior(normal(0, 0.5), class = 'b') +
+  prior(gamma(2, 2), class = 'shape') +
+  prior(logistic(0, 1), class = 'Intercept', dpar = "zi")
+```
+
+
+## Fit model: 
+```{r}
+abun_biogeo_model_priorsonly <- 
+  brm(abun_biogeo_form,
+  data = predsum,
+  prior = abun_biogeo_priors,
+  sample_prior = 'only',              
+  chains = 3,
+  cores = 3,
+  iter = 5000, 
+  warmup = 1000, 
+  thin = 4,
+  seed = 1234,
+  silent = 0,
+  refresh = 0,
+  backend = "cmdstanr")
+```
+
+
+## Check how wide priors are
+```{r fig.width=140/25.4}
+abun_biogeo_model_priorsonly |> conditional_effects() |> 
+   plot(points = TRUE, ask = FALSE, plot = TRUE) 
+```
+
+
+## Fit with data
+```{r cache=TRUE}
+abun_biogeo_model <- abun_biogeo_model_priorsonly |> update(sample_prior = "yes", refresh = 0)
+```
+
+## Check influence of priors
+```{r}
+abun_biogeo_model |> SUYR_prior_and_posterior()
+```
+
+
+# Model validation
+
+## DHARMa residuals
+```{r}
+resids <- make_brms_dharma_res(abun_biogeo_model, integerResponse = FALSE)
+testUniformity(resids)
+plotResiduals(resids, form = factor(rep(1, nrow(predsum))))
+plotResiduals(resids, quantreg = TRUE)
+testDispersion(resids) # Dispersion plot (dispersion = variance/mean) - we assume mean and variance are the same, so we need to check
+```
+
+## Residuals look good. 
+
+## Chain checks
+
+```{r}
+abun_biogeo_model |> plot(ask = FALSE)
+# Trace plot
+mcmc_plot(abun_biogeo_model, type='trace')
+# Autocorrelation
+mcmc_plot(abun_biogeo_model, type='acf_bar')
+# Rhat - how well the chains converged
+mcmc_plot(abun_biogeo_model, type='rhat_hist')
+# Percentage effectives - needs to be greater than 0.5
+mcmc_plot(abun_biogeo_model, type='neff_hist')
+```
+
+
+
+## PP checks
+```{r}
+# Logged
+pred <- posterior_predict(abun_biogeo_model)
+bayesplot::ppc_dens_overlay(y = log(predsum$No_Preds), 
+                            yrep = log(pred[1:100,]))
+```
+Posterior draws fit the data nicely:
+y = the observed data
+yrep = the predictive(posterior) distribution
+
+
+### NEED TO DO THE ZI WORK HERE ###
+```{r}
+
+```
+
+# Model investigation 
+## Conditional effects plot again to aid interpretation
+```{r}
+abun_biogeo_model |> conditional_effects() |> plot(ask = FALSE, points = FALSE) # Without raw data
+#abun_biogeo_model |> conditional_effects() |> plot(ask = FALSE, points = TRUE) # With raw data overplotted
+```
+
+## Summary table
+```{r}
+abun_biogeo_model |> 
+  as_draws_df() |>    # Extract draws
+  exp() |>            # Back transform
+  summarise_draws(median,
+                  HDInterval::hdi,
+                  rhat, ess_bulk, ess_tail,
+                  Pl = ~mean(.x <1),                       # Exceedence prob - on exp scale it's sig if doesn't cross 1
+                  Pg = ~mean(.x >1))|> 
+  as_tibble() |> 
+  mutate(median = round(median, 3),
+         lower = round(lower, 3),
+         upper = round(upper, 3))
+```
+
+
+
+# Try with region as combined predictor of horizontal position
+
+# Priors should be good but we'll need to specify the formula
+
+```{r}
+region_form <- bf(No_Preds ~ Depth*Region + (1|Site), zi ~ 1, family = zero_inflated_negbinomial(link = "log"))
+```
+
+## Fit with data
+```{r cache=TRUE}
+abun_biogeo_model2 <- abun_biogeo_model |> update(formula = region_form, newdata = predsum, sample_prior = "yes", refresh = 0)
+```
+
+## Quick chain check
+```{r}
+abun_biogeo_model2 |> plot(ask = FALSE)
+```
+
+## DHARMa residuals
+```{r}
+resids2 <- make_brms_dharma_res(abun_biogeo_model2, integerResponse = FALSE)
+testUniformity(resids2)
+plotResiduals(resids2, form = factor(rep(1, nrow(predsum))))
+plotResiduals(resids2, quantreg = TRUE)
+testDispersion(resids2) # Dispersion plot (dispersion = variance/mean) - we assume mean and variance are the same, so we need to check
+```
+
+# R2
+```{r}
+abun_biogeo_model |> bayes_R2()
+abun_biogeo_model2 |> bayes_R2()
+```
+
+
+
+```{r}
+loo_compare(brms::loo(abun_biogeo_model), brms::loo(abun_biogeo_model2))
+```
+
+            elpd_diff se_diff
+abun_biogeo_model   0.0       0.0   
+abun_biogeo_model2 -3.9       2.8
+
+The full continuous predictor model comes out best. 
+
+## Assign that as final model 
+```{r}
+abun_biogeo_model_final <- abun_biogeo_model
+```
+
+## Save
+```{r}
+save(abun_biogeo_model_final, file = "data/Rdata/abun_biogeo_model_final.Rda")
+```
+
+
+
+
+
+
+
+

@@ -1,0 +1,676 @@
+---
+title: "Predator assemblage composition using boral - reef size with data pooled at site-depth"
+author: "Ben Cresswell"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: 
+ html_document:
+    code_folding: show
+    collapse: no
+    df_print: paged
+    fig_caption: yes
+    fig_height: 6
+    fig_width: 10
+    highlight: textmate
+    theme: spacelab
+    toc: yes
+    toc_float: yes
+editor_options: 
+  chunk_output_type: inline
+---
+
+
+
+```{r setup, include=FALSE}
+# Set options, housekeeping
+knitr::opts_chunk$set(
+	echo = FALSE,
+	include = TRUE,
+	message = FALSE,
+	warning = FALSE)
+#rm(list=ls()) # Clear out environment if necessary
+```
+
+
+# Prerequisites
+```{r message=FALSE, warning=FALSE, include=FALSE}
+source("code/packages.R")
+source("code/helper_functions.R")
+source("code/extras.R")
+load("data/Rdata/predsum.Rdata")
+load("data/Rdata/preds.Rdata")
+#source("code/diversity/depth_site_diversity.R")
+library(boral)
+```
+
+
+## Summarise species counts
+```{r}
+boral_speccount_SD <- 
+  preds |> 
+  group_by(Region, Reef_1, Site, Depth, Site_Depth, dCT, Binomial) |> 
+  dplyr::summarise(Count=sum(Number)) |> 
+  ungroup()
+```
+
+
+## Convert into "wide" format diversity matrix - this is going to be our y variable
+```{r}
+boral_abund_SD <- 
+  boral_speccount_SD |> 
+  pivot_wider(names_from = Binomial, values_from=Count, values_fill = 0) |> 
+  dplyr::select(!`NA`) |>  # Get rid of column where the sp name ('Binomial') had been NA
+  ungroup()
+```
+
+
+# And convert into matrix
+```{r}
+boral_matrix_SD <- 
+  boral_abund_SD |> 
+  select(!c(Region, Reef_1, Site, Depth, Site_Depth, dCT)) |> 
+  as.matrix()
+```
+
+## Store list of predictors - this is going to be our x variable
+At depth_site pooling
+```{r}
+env_boral_SD <- 
+  preds |> 
+  select(Region, Reef_1, Site,
+         Reef_1_Area, Reef_100, Reef_size,
+         Depth, Site_Depth,
+         dCT, dGBR
+         ) |> 
+  distinct() |> 
+  as.data.frame() |> 
+  mutate(Region = fct_relevel(Region, "Central"))
+```
+
+
+# Set mcmc control parameters
+```{r}
+mcmc.control. <- list(n.burnin = 1000,
+                      n.iteration = 7000,
+                      n.thin = 30,
+                      seed = 123)
+```
+
+
+
+# See if there are differences between reef sizes
+
+```{r}
+#boral_SD_reefsize2 <- boral(boral_matrix_SD, X = env_boral_SD, family="negative.binomial",
+#                   formula.X = ~ Reef_size,
+#                   #ranef.ids = env_boral_SD$Site,
+#                   #row.eff = "random", # got rid of this for model 2
+#                   mcmc.control = mcmc.control.,
+#                   lv.control = list(num.lv = 2),
+#                   save.model = TRUE)
+
+#save(boral_SD_reefsize, file = "data/Rdata/boral_SD_reefsize.rda")
+#save(boral_SD_reefsize2, file = "data/Rdata/boral_SD_reefsize2.rda") # No random row effect
+load(file = "data/Rdata/boral_SD_reefsize.rda")
+```
+
+
+# Check geweke diagnostics (chain convergence)
+```{r}
+# Raw geweke diagnostics
+boral_SD_reefsize$geweke.diag
+#geweke.plot(boral_SD_reefsize$jags.model)
+#geweke.diag(get.mcmcsamples(boral_nb2))
+#get.mcmcsamples(boral_nb2) %>% geweke.plot()
+# Adjusted for multiple comparisons
+#gew.pvals <- 2*pnorm(abs(unlist(boral_nb2$geweke.diag[[1]])), lower.tail = FALSE) %>%  p.adjust(method = "holm")
+#p.adjust(gew.pvals, method = "holm")
+```
+
+
+# Extract coefficients for plotting
+```{r}
+x <- boral_SD_reefsize
+```
+
+
+```{r}
+#alpha is an argument in lvsplot(); relates to scaling
+alpha <- 0.5
+```
+
+
+```{r}
+testcov <- x$lv.median %*% t(x$lv.coefs.median[, 2:3])
+
+#singular value decom
+do.svd <- svd(testcov, x$num.lv, x$num.lv)
+
+#svd has components d, u and v
+
+#some math related to rescaling
+choose.lvs <- scale(do.svd$u *      matrix(do.svd$d[1:x$num.lv]^alpha, 
+                                           nrow = x$n, ncol = 2, byrow = T), center = T, scale = F)
+
+#some more math related to rescaling
+choose.lv.coefs <- scale(do.svd$v * matrix(do.svd$d[1:x$num.lv]^(1 - 
+                                                                   alpha), nrow = x$p, ncol = 2, byrow = T), center = T, 
+                         scale = F)
+```
+
+
+# Check that our calculations produce the same scaled biplot:
+```{r}
+lvsplot(boral_SD_reefsize, cex = 0.8, biplot = F, main = "real biplot")
+plot(choose.lvs, main = "hacked biplot")
+```
+
+Looks good, can plot properly now
+
+
+```{r}
+#boral_ord_data <- 
+env_boral_SD |> 
+  bind_cols(choose.lvs  |>  as.data.frame()) |> 
+  ggplot(aes(x = V1, y = V2)) +
+  geom_hline(yintercept = 0, lty = 11) +
+  geom_vline(xintercept = 0, lty = 11) +
+  geom_point(aes(colour = Reef_size, shape = Reef_size)) +
+  ggforce::geom_mark_hull(aes(fill = Reef_size), expand=0.02, concavity = 3) + 
+  #ggforce::geom_mark_ellipse(aes(fill = Region), expand = 0, tol = 0.001) + 
+  theme_bw() +
+  facet_wrap(~ Reef_size)
+
+```
+
+
+
+
+# Ex2tract coefficients for plotting
+```{r}
+x2 <- boral_SD_reefsize2
+```
+
+
+```{r}
+#alpha is an argument in lvsplot(); relates to scaling
+alpha <- 0.5
+```
+
+
+```{r}
+testcov2 <- x2$lv.median %*% t(x2$lv.coefs.median[, 2:3])
+
+#singular value decom
+do.svd2 <- svd(testcov2, x2$num.lv, x2$num.lv)
+
+#svd has components d, u and v
+
+#some math related to rescaling
+choose.lvs2 <- scale(do.svd2$u *      matrix(do.svd2$d[1:x2$num.lv]^alpha, 
+                                           nrow = x2$n, ncol = 2, byrow = T), center = T, scale = F)
+
+#some more math related to rescaling
+choose.lv.coef2s <- scale(do.svd2$v * matrix(do.svd2$d[1:x2$num.lv]^(1 - 
+                                                                   alpha), nrow = x2$p, ncol = 2, byrow = T), center = T, 
+                         scale = F)
+```
+
+
+# Check that our calculations produce the same scaled biplot:
+```{r}
+lvsplot(boral_SD_reefsize2, cex2 = 0.8, biplot = F, main = "real biplot")
+plot(choose.lvs2, main = "hacked biplot")
+```
+
+Looks good, can plot properly now
+
+
+```{r}
+#boral_ord_data <- 
+env_boral_SD |> 
+  bind_cols(choose.lvs2  |>  as.data.frame()) |> 
+  ggplot(aes(x = V1, y = V2)) +
+  geom_hline(yintercept = 0, lty = 11) +
+  geom_vline(xintercept = 0, lty = 11) +
+  geom_point(aes(colour = Reef_size, shape = Reef_size)) +
+  ggforce::geom_mark_hull(aes(fill = Reef_size), expand=0.02, concavity = 3) + 
+  #ggforce::geom_mark_ellipse(aes(fill = Region), ex2pand = 0, tol = 0.001) + 
+  theme_bw() +
+  facet_wrap(~ Reef_size)
+
+```
+
+
+# Extract species coefficients
+```{r}
+# Mean values
+Xcoefs_mean <-
+  boral_SD_reefsize$X.coefs.mean |> 
+  as.matrix() |> 
+  as.data.frame() |> 
+  rownames_to_column(var = "Species")  |> 
+  pivot_longer(cols = !Species, names_prefix = "Reef_size", names_to = "Reef_size", values_to = "Mean")
+
+# Median values
+Xcoefs_median <-
+  boral_SD_reefsize$X.coefs.median |> 
+  as.matrix() |> 
+  as.data.frame() |> 
+  rownames_to_column(var = "Species")  |> 
+  pivot_longer(cols = !Species, names_prefix = "Reef_size", names_to = "Reef_size", values_to = "Median")
+
+# Lower CI
+Xcoefs_lowerHPD <- 
+  boral_SD_reefsize$hpdintervals$X.coefs |> 
+  as.data.frame()  |> 
+  rownames_to_column(var = "Species") |> 
+  select(!4:5) |> 
+  pivot_longer(cols = !Species, names_prefix = "Reef_size", names_pattern = "(.*).lower", names_to = "Reef_size", values_to = "lower.HPD")
+
+# Upper CI
+Xcoefs_upperHPD <- 
+  boral_SD_reefsize$hpdintervals$X.coefs |> 
+  as.data.frame()  |> 
+  rownames_to_column(var = "Species") |> 
+  select(!2:3) |> 
+  pivot_longer(cols = !Species, names_prefix = "Reef_size", names_pattern = "(.*).upper", names_to = "Reef_size", values_to = "upper.HPD")
+```
+
+# Combine
+```{r}
+Xcoefs <- 
+  Xcoefs_median |> 
+  full_join(Xcoefs_lowerHPD) |> 
+  full_join(Xcoefs_upperHPD) |> 
+  mutate_if(is.character, as.factor)
+```
+
+# Now we could use some higher taxonomy info for plotting
+
+# Create family order/index
+```{r}
+family_order <- 
+  preds |> 
+  select(Family) |> 
+  distinct() |> 
+  arrange(Family) |> 
+  mutate(Fam_Ord = seq(1,22,1))
+```
+
+# Get family info from preds
+```{r}
+family_info <- 
+  preds |> 
+  select(Family, Binomial) |> 
+  distinct() |> 
+  rename(Species = Binomial) |> 
+  filter(!(str_detect(Species, "Aphar") & str_detect(Family, "Carang")))  |> # This also removes the 'NA' taxon
+  mutate(Family = replace(Family, str_detect(Species, "Epinephelus "), "Serranidae")) |> 
+  mutate(Family = replace(Family, str_detect(Species, "Bodianus "), "Labridae"))  |> 
+  left_join(family_order) |>   # And add the order back in 
+  droplevels()
+
+family_info  %$% summary(factor(Species))
+
+```
+
+
+# Extract just the significant differences
+```{r}
+sigXcoefs <- Xcoefs |> 
+  left_join(family_info) |> 
+  mutate(TestA = ifelse(lower.HPD < 0, -1, 0),
+         TestB = ifelse(upper.HPD > 0, 1, 0),
+         Flag = TestA+TestB) |> 
+  filter(Flag != 0) |> 
+  mutate(Species = fct_reorder(Species, Fam_Ord)) 
+
+sigXcoefs  %$% summary(factor(Species))
+```
+
+
+
+
+# Plot significant taxa
+```{r fig.width = 160/25.4, fig.height=100/25.4}
+taxa_diffs <- 
+sigXcoefs |> 
+  mutate(Reef_size1 = case_when(grepl("Mean", Reef_size) ~ "Mid-sized reefs",
+                                grepl("UQ", Reef_size) ~ "Large reefs")) |> 
+  ggplot(aes(x = Species, y = Median)) +
+  geom_pointrange(aes(ymin = lower.HPD, ymax = upper.HPD), colour = "black") +
+  geom_point(aes(fill = Family), pch = 21, colour = "black", size = 3) +
+  geom_hline(yintercept = 0, lty = 11) +
+  scale_fill_viridis_d(guide = guide_legend(reverse = TRUE)) +
+ # scale_colour_viridis_d() +
+  scale_y_continuous("Latent variable coef. contrasts (median ± 95% CI)") +
+  coord_flip() +
+  theme_bjc() +
+  theme(axis.text.x = element_text()) +
+  facet_wrap(~ ~fct_rev(Reef_size1)) +
+  theme(axis.text.y = element_text(face = 'italic'))
+
+taxa_diffs
+```
+
+## Next, we'll marry this up with lob_preds to demonstrate abundance with depth for each taxon
+
+# Extract significant taxa
+```{r}
+sig_taxa <- 
+sigXcoefs |> 
+  select(Species) %>% 
+  distinct()  |> 
+  mutate(Species = as.character(Species)) |> 
+  arrange(Species)
+sig_taxa
+```
+
+
+```{r}
+sig_preds <- 
+  sig_taxa |> 
+  select(Species) %>% 
+  distinct() %>% 
+  rename(Binomial = Species) %>% 
+  left_join(preds)
+```
+
+
+```{r}
+sig_predsum <- 
+   sig_preds  %>% 
+   group_by(Reef_size, Reef_1, Binomial) %>%
+   summarise(No_Preds =sum(Number)) %>%  # All good - 514
+   ungroup() %>% 
+  complete(Reef_size, Binomial, Reef_1) %>% 
+  mutate(No_Preds = replace_na(No_Preds, 0))
+```
+
+```{r}
+sig_predsum2 <- sig_predsum %>% 
+  group_by(Reef_size, Binomial) %>%
+  summarise(mean = mean(No_Preds),
+            sd = sd(No_Preds, na.rm = TRUE),
+            SE = std.error(No_Preds, na.rm = TRUE)) %>% 
+  arrange(-mean) %>% 
+  arrange(Reef_size) 
+```
+
+
+
+
+```{r fig.width=160/25.4, fig.height=80/25.4}
+sig_abun_plot <- 
+sig_predsum2 %>% 
+  ggplot(aes(x = Reef_size, y = mean, fill = Reef_size)) +
+  geom_line(aes(group = 1)) +
+  geom_linerange(aes(ymin = mean - SE, ymax = mean + SE)) +
+  geom_point(pch = 21, size = 2) +
+  scale_y_continuous(name = "Mean abundance ± SE") +
+  theme_bjc() +
+  theme(legend.title = element_blank(),
+        legend.position = c(0.5, 0.07),
+        legend.direction = "horizontal",
+        axis.text = element_blank(),
+        strip.text.x = element_text(face = "italic")) +
+  facet_wrap(~ Binomial, nrow = 3, scales = "free_y")
+
+sig_abun_plot
+```
+
+
+
+
+
+
+
+
+```{r}
+coefplot <- sapply(colnames(boral_SD_reefsize$X), coefsplot, object = boral_SD_reefsize)
+
+sapply(colnames(boral_SD_reefsize$X), coefsplot, object = boral_SD_reefsize)
+```
+
+
+
+```{r}
+ggsave(filename = "output/taxa_diffs_reefsize.pdf", plot = taxa_diffs, height = 100, width = 160, device = cairo_pdf, units = "mm", dpi = 300)
+```
+
+
+
+
+
+
+
+
+# Now with R.E. removed
+
+# Extract species coefficients
+```{r}
+# Mean values
+Xcoefs_mean2 <-
+  boral_SD_reefsize2$X.coefs.mean |> 
+  as.matrix() |> 
+  as.data.frame() |> 
+  rownames_to_column(var = "Species")  |> 
+  pivot_longer(cols = !Species, names_prefix = "Reef_size", names_to = "Reef_size", values_to = "Mean")
+
+# Median values
+Xcoefs_median2 <-
+  boral_SD_reefsize2$X.coefs.median |> 
+  as.matrix() |> 
+  as.data.frame() |> 
+  rownames_to_column(var = "Species")  |> 
+  pivot_longer(cols = !Species, names_prefix = "Reef_size", names_to = "Reef_size", values_to = "Median")
+
+# Lower CI
+Xcoefs_lowerHPD2 <- 
+  boral_SD_reefsize2$hpdintervals$X.coefs |> 
+  as.data.frame()  |> 
+  rownames_to_column(var = "Species") |> 
+  select(!4:5) |> 
+  pivot_longer(cols = !Species, names_prefix = "Reef_size", names_pattern = "(.*).lower", names_to = "Reef_size", values_to = "lower.HPD")
+
+# Upper CI
+Xcoefs_upperHPD2 <- 
+  boral_SD_reefsize2$hpdintervals$X.coefs |> 
+  as.data.frame()  |> 
+  rownames_to_column(var = "Species") |> 
+  select(!2:3) |> 
+  pivot_longer(cols = !Species, names_prefix = "Reef_size", names_pattern = "(.*).upper", names_to = "Reef_size", values_to = "upper.HPD")
+```
+
+# Combine
+```{r}
+Xcoefs2 <- 
+  Xcoefs_median2 |> 
+  full_join(Xcoefs_lowerHPD2) |> 
+  full_join(Xcoefs_upperHPD2) |> 
+  mutate_if(is.character, as.factor)
+```
+
+# Now we could use some higher taxonomy info for plotting
+
+# Create family order/index
+```{r}
+family_order <- 
+  preds |> 
+  select(Family) |> 
+  distinct() |> 
+  arrange(Family) |> 
+  mutate(Fam_Ord = seq(1,22,1))
+```
+
+# Get family info from preds
+```{r}
+family_info <- 
+  preds |> 
+  select(Family, Binomial) |> 
+  distinct() |> 
+  rename(Species = Binomial) |> 
+  filter(!(str_detect(Species, "Aphar") & str_detect(Family, "Carang")))  |> # This also removes the 'NA' taxon
+  mutate(Family = replace(Family, str_detect(Species, "Epinephelus "), "Serranidae")) |> 
+  mutate(Family = replace(Family, str_detect(Species, "Bodianus "), "Labridae"))  |> 
+  left_join(family_order) |>   # And add the order back in 
+  droplevels()
+
+family_info  %$% summary(factor(Species))
+
+```
+
+
+# Extract just the significant differences
+```{r}
+sigXcoefs2 <- Xcoefs2 |> 
+  left_join(family_info) |> 
+  mutate(TestA = ifelse(lower.HPD < 0, -1, 0),
+         TestB = ifelse(upper.HPD > 0, 1, 0),
+         Flag = TestA+TestB) |> 
+  filter(Flag != 0) |> 
+  mutate(Species = fct_reorder(Species, Fam_Ord)) 
+
+sigXcoefs  %$% summary(factor(Species))
+```
+
+
+
+
+# Plot significant taxa
+```{r fig.width = 160/25.4, fig.height=100/25.4}
+taxa_diffs2 <- 
+sigXcoefs2 |> 
+  mutate(Reef_size1 = case_when(grepl("Mean", Reef_size) ~ "Mid-sized reefs",
+                                grepl("UQ", Reef_size) ~ "Large reefs")) |> 
+  ggplot(aes(x = Species, y = Median)) +
+  geom_pointrange(aes(ymin = lower.HPD, ymax = upper.HPD), colour = "black") +
+  geom_point(aes(fill = Family), pch = 21, colour = "black", size = 3) +
+  geom_hline(yintercept = 0, lty = 11) +
+  scale_fill_viridis_d(guide = guide_legend(reverse = TRUE)) +
+ # scale_colour_viridis_d() +
+  scale_y_continuous("Latent variable coef. contrasts (median ± 95% CI)") +
+  coord_flip() +
+  theme_bjc() +
+  theme(axis.text.x = element_text()) +
+  facet_wrap(~ ~fct_rev(Reef_size1)) +
+  theme(axis.text.y = element_text(face = 'italic'))
+
+taxa_diffs
+taxa_diffs2
+```
+
+# From mvabund_SD_size:
+Parapercis sp	     14.0914982	0.042		
+Lutjanus gibbus	   13.6116024	0.055		
+Macolor niger	     11.9173136	0.098		
+Aphareus furca	   11.5756568	0.108		
+Cephalopholis boenak	11.3429147	0.127		
+Caranx lugubris	   9.8020092	0.264		
+Plectorhinchus chaetodonoides	9.7581592	0.266		
+Paracirrhites forsteri	9.6962276	0.276		
+Caranx papuensis	9.2707987	0.334		
+Monotaxis heterodon	9.2160187	0.343	
+
+
+## Next, we'll marry this up with lob_preds to demonstrate abundance with depth for each taxon
+
+# Extract significant taxa
+```{r}
+sig_taxa2 <- 
+sigXcoefs2 |> 
+  select(Species) %>% 
+  distinct()  |> 
+  mutate(Species = as.character(Species)) |> 
+  arrange(Species)
+sig_taxa2
+```
+
+
+```{r}
+sig_preds2 <- 
+  sig_taxa2 |> 
+  select(Species) %>% 
+  distinct() %>% 
+  rename(Binomial = Species) %>% 
+  left_join(preds)
+```
+
+
+```{r}
+sig_predsum2 <- 
+   sig_preds2  %>% 
+   group_by(Reef_size, Reef_1, Binomial) %>%
+   summarise(No_Preds =sum(Number)) %>%  # All good - 514
+   ungroup() %>% 
+  complete(Reef_size, Binomial, Reef_1) %>% 
+  mutate(No_Preds = replace_na(No_Preds, 0))
+```
+
+```{r}
+sig_predsum2 <- sig_predsum2 %>% 
+  group_by(Reef_size, Binomial) %>%
+  summarise(mean = mean(No_Preds),
+            sd = sd(No_Preds, na.rm = TRUE),
+            SE = std.error(No_Preds, na.rm = TRUE)) %>% 
+  arrange(-mean) %>% 
+  arrange(Reef_size) 
+```
+
+
+
+
+```{r fig.width=160/25.4, fig.height=80/25.4}
+sig_abun_plot2 <- 
+sig_predsum2 %>% 
+  ggplot(aes(x = Reef_size, y = mean, fill = Reef_size)) +
+  geom_line(aes(group = 1)) +
+  geom_linerange(aes(ymin = mean - SE, ymax = mean + SE)) +
+  geom_point(pch = 21, size = 2) +
+  scale_y_continuous(name = "Mean abundance ± SE") +
+  theme_bjc() +
+  theme(legend.title = element_blank(),
+        legend.position = c(0.5, 0.07),
+        legend.direction = "horizontal",
+        axis.text = element_blank(),
+        strip.text.x = element_text(face = "italic")) +
+  facet_wrap(~ Binomial, nrow = 3, scales = "free_y")
+
+sig_abun_plot2
+```
+
+
+
+
+
+
+
+
+```{r}
+#coefplot <- sapply(colnames(boral_SD_reefsize2$X), coefsplot, object = boral_SD_reefsize2)
+#sapply(colnames(boral_SD_reefsize2$X), coefsplot, object = boral_SD_reefsize2)
+```
+
+
+
+```{r}
+ggsave(filename = "output/taxa_diffs_reefsize2.pdf", plot = taxa_diffs, height = 100, width = 160, device = cairo_pdf, units = "mm", dpi = 300)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

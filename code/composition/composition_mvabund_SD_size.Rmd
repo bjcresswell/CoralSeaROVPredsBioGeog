@@ -1,0 +1,186 @@
+---
+title: "Predator assemblage composition: differences among reef sizes with site_depth as sampling unit"
+author: "Ben Cresswell"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: 
+ html_document:
+    code_folding: show
+    collapse: no
+    df_print: paged
+    fig_caption: yes
+    fig_height: 6
+    fig_width: 10
+    highlight: textmate
+    theme: spacelab
+    toc: yes
+    toc_float: yes
+editor_options: 
+  chunk_output_type: inline
+---
+
+
+```{r setup, include=FALSE}
+# Set options, housekeeping
+knitr::opts_chunk$set(
+	echo = FALSE,
+	include = TRUE,
+	message = FALSE,
+	warning = FALSE)
+#rm(list=ls()) # Clear out environment if necessary
+```
+
+
+# Prerequisites
+```{r message=FALSE, warning=FALSE, include=FALSE}
+source("code/packages.R")
+#source("code/helper_functions.R")
+source("code/extras.R")
+#load("data/Rdata/predsum.Rdata")
+load("data/Rdata/preds.Rdata")
+#load("data/Rdata/rmetadata.Rdata")
+#source("code/diversity/depth_site_diversity.R")
+```
+
+
+
+## Store list of predictors we'll be interested in at the end.
+```{r}
+env_vars_size_sitedepth <- 
+  preds |> 
+  #filter(Region != "South") |> 
+  select(Region, Reef_1, Reef_size, Site, Depth, Site_Depth,
+         dCT, dGBR) |> 
+  distinct()
+```
+
+
+
+## Summarise species accounts by depth bin, site:
+```{r}
+sizesitedepth_speccount_mva <- 
+  preds |> 
+#  filter(Region != "South") |> 
+  group_by(Site_Depth, Binomial) |> # Just the grouping variable (single) that we are interested in here
+  dplyr::summarise(Count=sum(Number)) |> 
+  ungroup()
+```
+
+
+
+
+## Convert into "wide" format diversity matrix
+```{r}
+sizesitedepth_matrix_mva <- 
+  sizesitedepth_speccount_mva |> 
+  pivot_wider(names_from = Binomial, values_from=Count, values_fill = 0) |> 
+  dplyr::select(!`NA`) |>  # Get rid of column where the sp name ('Binomial') had been NA
+  ungroup() 
+```
+
+
+## Turn into mvabund object
+```{r}
+predabund <- mvabund(sizesitedepth_matrix_mva[-1]) 
+```
+
+## Check out mean-variance relationship - should be 1-1 as we are working with count data
+```{r}
+par(predabund)
+meanvar <- meanvar.plot(predabund) 
+```
+
+# EDA - can do a basic overview of abundance ~ predictor variable
+Won't work in Rmd!! Need to copy to script or console
+```{r}
+#plot(predabund ~ env_vars_size_sitedepth$Reef_size)
+```
+
+
+#  Model fitting
+## Notes:
+- mvabund cannot handle random factors (yet) so a resampling approach used instead (see below)
+- There is a pattern in the Poisson model residuals (not surprising, given the ZI in these data) so have commented out
+
+```{r}
+# Neg binom model options
+sizesitedepth_mod <- manyglm(predabund ~ env_vars_size_sitedepth$Reef_size, family="negative_binomial")
+```
+
+
+
+# Model validation 
+# In mvabund the only way to check this is plotting residuals vs fitted values
+```{r}
+plot.manyglm(sizesitedepth_mod, which = 1) # 
+plot.manyglm(sizesitedepth_mod, which = 2) # 
+plot.manyglm(sizesitedepth_mod, which = 3) # L
+```
+
+
+
+
+# Summaries
+```{r}
+#sizesitedepth_modsum <- summary(sizesitedepth_mod)
+
+# Save as these take a while to run
+#save(sizesitedepth_modsum, file = "data/Rdata/sizesitedepth_modsum.Rdata") # 
+
+load(file = "data/Rdata/sizesitedepth_modsum.Rdata") # 
+sizesitedepth_modsum
+```
+
+
+# Pairwise comparisons
+```{r}
+#sizesitedepth_aov <- anova.manyglm(sizesitedepth_mod, test = 'LR', pairwise.comp = env_vars_size_sitedepth$Reef_size,  p.uni="adjusted")
+```
+
+# These anovas are very slow to run -save results for use later
+```{r}
+#save(sizesitedepth_aov, file = "data/Rdata/sizesitedepth_aov.Rda") # 
+```
+
+# Reload if/when required
+```{r}
+load(file = "data/Rdata/sizesitedepth_aov.Rda")
+```
+
+# Results
+
+# Contrasts
+```{r}
+sizesitedepth_contrasts <- 
+  sizesitedepth_aov$pairwise.comp.table  |> 
+              rownames() |> 
+              as_tibble() |> 
+              mutate(Contrast = value, .keep = "unused") |> 
+  bind_cols(sizesitedepth_aov$pairwise.comp.table  |> 
+  as_tibble())
+
+sizesitedepth_contrasts
+```
+
+
+
+
+```{r}
+sizesitedepth_uni_contrasts <- 
+  t(sizesitedepth_aov$uni.test) %>% 
+  as.data.frame() %>% 
+  rownames_to_column("Binomial") %>% 
+  rename(LRT = `env_vars_size_sitedepth$Reef_size`) %>% 
+  select(!`(Intercept)`) %>% 
+  left_join(  
+  t(sizesitedepth_aov$uni.p) %>% 
+  as.data.frame() %>% 
+  rownames_to_column("Binomial") %>% 
+  rename(P = `env_vars_size_sitedepth$Reef_size`) %>% 
+  select(!`(Intercept)`)) %>% 
+  mutate(Binomial = str_replace(Binomial, "\\.", " ")) %>% 
+  arrange(-LRT)
+
+sizesitedepth_uni_contrasts
+
+```
+

@@ -1,0 +1,234 @@
+---
+title: "Predator assemblage composition: differences among regions using transect as sampling unit"
+author: "Ben Cresswell"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: 
+ html_document:
+    code_folding: show
+    collapse: no
+    df_print: paged
+    fig_caption: yes
+    fig_height: 6
+    fig_width: 10
+    highlight: textmate
+    theme: spacelab
+    toc: yes
+    toc_float: yes
+editor_options: 
+  chunk_output_type: inline
+---
+
+
+```{r setup, include=FALSE}
+# Set options, housekeeping
+knitr::opts_chunk$set(
+	echo = FALSE,
+	include = TRUE,
+	message = FALSE,
+	warning = FALSE)
+#rm(list=ls()) # Clear out environment if necessary
+```
+
+
+# Prerequisites
+```{r message=FALSE, warning=FALSE, include=FALSE}
+source("code/packages.R")
+source("code/extras.R")
+load("data/Rdata/preds.Rdata")
+```
+
+
+## Store list of predictors we'll be interested in at the end.
+In this case, just region
+```{r}
+env_vars_region_TID <- 
+  preds |> 
+  select(Region, T_ID) |> 
+  distinct()
+```
+
+
+## Summarise species accounts by transect
+NB: This is obviously same across all TID versions of this analysis 
+```{r}
+TID_speccount_mva <- 
+  preds |> 
+  group_by(T_ID, Binomial) |> # Just the grouping variables that we are interested in here
+  dplyr::summarise(Count=sum(Number)) |> 
+  ungroup()
+```
+
+
+## Convert into "wide" format diversity matrix
+```{r}
+TID_matrix_mva <- 
+  TID_speccount_mva |> 
+  pivot_wider(names_from = Binomial, values_from=Count, values_fill = 0) |> 
+  dplyr::select(!`NA`) |>  # Get rid of column where the sp name ('Binomial') had been NA
+  ungroup() 
+```
+
+
+## Turn into mvabund object
+```{r}
+TID_predabund <- mvabund(TID_matrix_mva[-1]) 
+```
+
+## Check out mean-variance relationship - should be 1-1 as we are working with count data
+```{r}
+par(TID_predabund)
+TID_meanvar <- meanvar.plot(TID_predabund) 
+```
+
+# EDA - can do a basic overview of abundance ~ predictor variable
+Won't work in Rmd!! Need to copy to script or console
+```{r}
+#plot(TID_predabund ~ env_vars_region_TID$Region)
+```
+
+
+#  Model fitting
+## Notes:
+- mvabund cannot handle random factors (yet) so a resampling approach used instead (see below)
+- There is a pattern in the Poisson model residuals (not surprising, given the ZI in these data) so have commented out
+
+```{r}
+# Neg binom model options
+regionTID_mod <- manyglm(TID_predabund ~ env_vars_region_TID$Region, family="negative_binomial")
+```
+
+
+
+# Model validation 
+# In mvabund the only way to check this is plotting residuals vs fitted values
+```{r}
+plot.manyglm(regionTID_mod, which = 1) # 
+plot.manyglm(regionTID_mod, which = 2) # 
+plot.manyglm(regionTID_mod, which = 3) # L
+```
+
+
+
+# Summaries
+```{r}
+#regionTID_modsum <- summary(regionTID_mod)
+
+# Save as these take a while to run
+#save(regionTID_modsum, file = "data/Rdata/regionTID_modsum.Rdata") # 
+load(file = "data/Rdata/regionTID_modsum.Rdata") # 
+regionTID_modsum
+```
+
+
+# Pairwise comparisons
+```{r}
+#regionTID_aov <- anova.manyglm(regionTID_mod, test = 'LR', pairwise.comp = env_vars_region_TID$Region,  p.uni="adjusted")
+#regionTID_aov2 <- anova.manyglm(regionTID_mod, test = 'LR', resamp = "case", block = env_vars_region_TID$Reef_1, pairwise.comp = env_vars_region_TID$Region,  p.uni="adjusted")
+```
+
+# These anovas are very slow to run -save results for use later
+```{r}
+#save(regionTID_aov, file = "data/Rdata/regionTID_aov.Rda") # 
+#save(regionTID_aov2, file = "data/Rdata/regionTID_aov2.Rda") # 
+```
+
+# Reload if/when required
+```{r}
+load(file = "data/Rdata/regionTID_aov.Rda")
+#load(file = "data/Rdata/regionTID_aov2.Rda")
+```
+
+# Results
+
+# Contrasts
+Multivariate (i.e. between regions)
+```{r}
+regionTID_multi_contrasts <- 
+  regionTID_aov$pairwise.comp.table  |> 
+              rownames() |> 
+              as_tibble() |> 
+              mutate(Contrast = value, .keep = "unused") |> 
+  bind_cols(regionTID_aov$pairwise.comp.table  |> 
+  as_tibble())
+
+regionTID_multi_contrasts
+```
+
+Univariate (for each taxon)
+```{r}
+regionTID_uni_contrasts <- 
+  t(regionTID_aov$uni.test) %>% 
+  as.data.frame() %>% 
+  rownames_to_column("Binomial") %>% 
+  rename(LRT = `env_vars_region_TID$Region`) %>% 
+  select(!`(Intercept)`) %>% 
+  left_join(  
+  t(regionTID_aov$uni.p) %>% 
+  as.data.frame() %>% 
+  rownames_to_column("Binomial") %>% 
+  rename(P = `env_vars_region_TID$Region`) %>% 
+  select(!`(Intercept)`)) %>% 
+  mutate(Binomial = str_replace(Binomial, "\\.", " ")) %>% 
+  arrange(-LRT)
+
+regionTID_uni_contrasts
+```
+Only 2 taxa with significant differences between regions
+Gymnocranius grandoculis
+Cephalopholis leopardus
+
+
+
+# Extract just the significant species from the raw data
+```{r}
+regionTID_sig_preds <- 
+  regionTID_uni_contrasts |> 
+  #select(Binomial) %>% 
+ # slice_head(n = 4) %>% 
+  filter(P <= 0.05) %>% 
+  left_join(preds)
+```
+
+# and calculate their relative abundances
+```{r}
+regionTID_sig_predsum <- 
+   regionTID_sig_preds  %>% 
+   group_by(Region, Reef_1, Binomial) %>%
+   summarise(No_Preds = sum(Number)) %>%  # All good - 514
+   ungroup() %>% 
+  complete(Region, Reef_1, Binomial) %>% 
+  mutate(No_Preds = replace_na(No_Preds, 0)) %>% 
+  group_by(Region, Binomial) %>%
+  summarise(mean = mean(No_Preds),
+            sd = sd(No_Preds, na.rm = TRUE),
+            SE = std.error(No_Preds, na.rm = TRUE)) %>% 
+  arrange(-mean) %>% 
+  arrange(Region) 
+regionTID_sig_predsum
+```
+
+
+# Plot
+```{r fig.width=100/25.4, fig.height=80/25.4}
+regionTID_sig_predsum_plot <- 
+regionTID_sig_predsum %>% 
+  ggplot(aes(x = Region, y = mean, fill = Region)) +
+  geom_line(aes(group = 1)) +
+  geom_linerange(aes(ymin = mean - SE, ymax = mean + SE)) +
+  geom_point(mapping = aes(shape = Region), size = 4) +
+  scale_y_continuous(name = expression("Mean abundance (.150m"^{2}~" ± SE)"), expand = c(0.1, 0.1)) +
+  scale_x_discrete(name = "Region") +
+  scale_fill_manual(values = c("lightskyblue", "dodgerblue3", "darkblue", "black")) +
+  scale_shape_manual(values = c(24, 22, 23, 25)) +
+  theme_bjc() + 
+  theme(legend.position = "none",
+        legend.title = element_blank(),
+        strip.text = element_text(size = 10, face = "italic"),
+        axis.text = element_text(size = 9),
+        plot.background = element_rect(fill = "transparent", colour = "black")) +
+  facet_wrap(~ Binomial, nrow = 2, scales = "free_y")
+
+regionTID_sig_predsum_plot
+
+```
+

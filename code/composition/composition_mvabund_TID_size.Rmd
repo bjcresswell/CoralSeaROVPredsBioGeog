@@ -1,0 +1,244 @@
+---
+title: "Predator assemblage composition - differences among reef sizes - TID scale"
+author: "Ben Cresswell"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: 
+ html_document:
+    code_folding: show
+    collapse: no
+    df_print: paged
+    fig_caption: yes
+    fig_height: 6
+    fig_width: 10
+    highlight: textmate
+    theme: spacelab
+    toc: yes
+    toc_float: yes
+editor_options: 
+  chunk_output_type: inline
+---
+
+
+```{r setup, include=FALSE}
+# Set options, housekeeping
+knitr::opts_chunk$set(
+	echo = FALSE,
+	include = TRUE,
+	message = FALSE,
+	warning = FALSE)
+#rm(list=ls()) # Clear out environment if necessary
+```
+
+
+# Prerequisites
+```{r message=FALSE, warning=FALSE, include=FALSE}
+source("code/packages.R")
+#source("code/helper_functions.R")
+source("code/extras.R")
+#load("data/Rdata/predsum.Rdata")
+load("data/Rdata/preds.Rdata")
+#load("data/Rdata/rmetadata.Rdata")
+#source("code/diversity/depth_site_diversity.R")
+```
+
+
+
+
+## Store list of predictors we'll be interested in at the end.
+```{r}
+env_vars_size_TID <- 
+  preds |> 
+  #filter(Region != "South") |> 
+  select(Reef_size, T_ID) |> 
+  distinct()
+```
+
+
+
+## Summarise species accounts by depth bin and site:
+```{r}
+sizeTID_speccount_mva <- 
+  preds |> 
+#  filter(Region != "South") |> 
+  group_by(T_ID, Binomial) |> # Just the grouping variables that we are interested in here
+  dplyr::summarise(Count=sum(Number)) |> 
+  ungroup()
+```
+
+
+
+
+## Convert into "wide" format diversity matrix
+```{r}
+sizeTID_matrix_mva <- 
+  sizeTID_speccount_mva |> 
+  pivot_wider(names_from = Binomial, values_from=Count, values_fill = 0) |> 
+  dplyr::select(!`NA`) |>  # Get rid of column where the sp name ('Binomial') had been NA
+  ungroup() 
+```
+
+
+## Turn into mvabund object
+```{r}
+predabund <- mvabund(sizeTID_matrix_mva[-1]) 
+```
+
+## Check out mean-variance relationship - should be 1-1 as we are working with count data
+```{r}
+par(predabund)
+meanvar <- meanvar.plot(predabund) 
+```
+
+# EDA - can do a basic overview of abundance ~ predictor variable
+Won't work in Rmd!! Need to copy to script or console
+```{r}
+#plot(predabund ~ env_vars_size_TID$Reef_size)
+```
+
+
+#  Model fitting
+## Notes:
+- mvabund cannot handle random factors (yet) so a resampling approach used instead (see below)
+- There is a pattern in the Poisson model residuals (not surprising, given the ZI in these data) so have commented out
+
+```{r}
+# Neg binom model options
+reefsizeTID_mod <- manyglm(predabund ~ env_vars_size_TID$Reef_size, family="negative_binomial")
+
+```
+
+
+
+# Model validation 
+# In mvabund the only way to check this is plotting residuals vs fitted values
+```{r}
+plot.manyglm(reefsizeTID_mod, which = 1) # 
+plot.manyglm(reefsizeTID_mod, which = 2) # 
+plot.manyglm(reefsizeTID_mod, which = 3) # L
+```
+
+
+
+# Summaries
+```{r}
+# Summary of model
+#reefsizeTID_modsum <- summary(reefsizeTID_mod)
+
+# Save as these take a while to run
+#save(reefsizeTID_modsum, file = "data/Rdata/reefsizeTID_modsum.Rdata") # 
+
+# Load when required
+load(file = "data/Rdata/reefsize_modsum.Rdata") # 
+
+# Inspect
+reefsize_modsum
+```
+
+
+# Pairwise comparisons
+```{r}
+#reefsizeTID_aov <- anova.manyglm(reefsizeTID_mod, test = 'LR', pairwise.comp = env_vars_size_TID$Reef_size,  p.uni="adjusted")
+```
+
+# These anovas are very slow to run -save results for use later
+```{r}
+#save(reefsizeTID_aov, file = "data/Rdata/reefsizeTID_aov.Rda") # 
+```
+
+# Reload if/when required
+```{r}
+load(file = "data/Rdata/reefsizeTID_aov.Rda")
+```
+
+# Results
+```{r}
+summary(reefsizeTID_aov)
+```
+
+
+# Contrasts
+```{r}
+reefsize_multi_contrasts <- 
+  reefsizeTID_aov$pairwise.comp.table  |> 
+              rownames() |> 
+              as_tibble() |> 
+              mutate(Contrast = value, .keep = "unused") |> 
+  bind_cols(reefsizeTID_aov$pairwise.comp.table  |> 
+  as_tibble())
+
+reefsize_multi_contrasts
+```
+
+
+```{r}
+
+reefsize_uni_contrasts <- 
+  t(reefsizeTID_aov$uni.test) %>% 
+  as.data.frame() %>% 
+  rownames_to_column("Binomial") %>% 
+  rename(LRT = `env_vars_size_TID$Reef_size`) %>% 
+  select(!`(Intercept)`) %>% 
+  left_join(  
+  t(reefsizeTID_aov$uni.p) %>% 
+  as.data.frame() %>% 
+  rownames_to_column("Binomial") %>% 
+  rename(P = `env_vars_size_TID$Reef_size`) %>% 
+  select(!`(Intercept)`)) %>% 
+  mutate(Binomial = str_replace(Binomial, "\\.", " ")) %>% 
+  arrange(-LRT)
+
+reefsize_uni_contrasts
+
+```
+
+
+```{r}
+reefsize_sig_preds <- 
+  reefsize_uni_contrasts |> 
+  filter(P <= 0.05) %>% 
+  left_join(preds)
+```
+
+
+```{r}
+reefsize_sig_predsum <- 
+   reefsize_sig_preds  %>% 
+   group_by(Reef_size, Reef_1, Binomial) %>%
+   summarise(No_Preds = sum(Number)) %>%  # All good - 514
+   ungroup() %>% 
+  complete(Reef_size, Reef_1, Binomial) %>% 
+  mutate(No_Preds = replace_na(No_Preds, 0)) %>% 
+  group_by(Reef_size, Binomial) %>%
+  summarise(mean = mean(No_Preds),
+            sd = sd(No_Preds, na.rm = TRUE),
+            SE = std.error(No_Preds, na.rm = TRUE)) %>% 
+  arrange(-mean) %>% 
+  arrange(Reef_size) 
+```
+
+
+
+```{r fig.width=80/25.4, fig.height=70/25.4}
+reefsize_sig_predsum_plot <- 
+reefsize_sig_predsum %>% 
+  ggplot(aes(x = Reef_size, y = mean, fill = Reef_size)) +
+  geom_line(aes(group = 1)) +
+  geom_linerange(aes(ymin = mean - SE, ymax = mean + SE)) +
+  geom_point(mapping = aes(shape = Reef_size), size = 3) +
+  scale_y_continuous(name = expression("Mean abund. (.150m"^{2}~" ± SE)"), expand = c(0.1, 0.1)) +
+  scale_x_discrete(labels =  c("Small", "Mid-size", "Large"), name = "Reef size") +
+  scale_fill_manual(labels =  c("Small", "Mid-size", "Large"), values = c("lightskyblue", "dodgerblue3", "darkblue")) +
+  scale_shape_manual(labels =  c("Small", "Mid-size", "Large"), values = c(24, 22, 25)) +
+  #scale_size_manual(labels =  c("Small", "Mid-size", "Large"), values = c(3, 5, 10)) +
+  theme_bjc() + 
+  theme(legend.position = "none",
+        legend.title = element_blank(),
+        strip.text = element_text(size = 10, face = "italic"),
+        axis.title.x = element_blank(),
+        plot.background = element_rect(fill = "transparent", colour = "black")) +
+  facet_wrap(~ Binomial, nrow = 2, scales = "free_y")
+
+reefsize_sig_predsum_plot
+
+```
+

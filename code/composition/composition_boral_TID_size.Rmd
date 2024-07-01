@@ -1,0 +1,370 @@
+---
+title: "Predator assemblage composition using boral"
+author: "Ben Cresswell"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: 
+ html_document:
+    code_folding: show
+    collapse: no
+    df_print: paged
+    fig_caption: yes
+    fig_height: 6
+    fig_width: 10
+    highlight: textmate
+    theme: spacelab
+    toc: yes
+    toc_float: yes
+editor_options: 
+  chunk_output_type: inline
+---
+
+
+
+```{r setup, include=FALSE}
+# Set options, housekeeping
+knitr::opts_chunk$set(
+	echo = FALSE,
+	include = TRUE,
+	message = FALSE,
+	warning = FALSE)
+#rm(list=ls()) # Clear out environment if necessary
+```
+
+
+# Prerequisites
+```{r message=FALSE, warning=FALSE, include=FALSE}
+source("code/packages.R")
+source("code/extras.R")
+load("data/Rdata/preds.Rdata")
+#source("code/diversity/depth_site_diversity.R")
+library(boral)
+library(ggboral)
+```
+
+
+
+## Summarise species counts
+```{r}
+boral_speccount_TID <- 
+  preds |> 
+  group_by(Region, Reef_1, Site, Depth, Site_Depth, dCT, Binomial, T_ID) |> 
+  dplyr::summarise(Count=sum(Number)) |> 
+  ungroup()
+```
+
+
+## Convert into "wide" format diversity matrix - this is going to be our y variable
+```{r}
+boral_abund_TID <- 
+  boral_speccount_TID |> 
+  pivot_wider(names_from = Binomial, values_from=Count, values_fill = 0) |> 
+  dplyr::select(!`NA`) |>  # Get rid of column where the sp name ('Binomial') had been NA
+  ungroup()
+```
+
+
+# And convert into matrix
+```{r}
+boral_matrix_TID <- 
+  boral_abund_TID |> 
+  select(!c(Region, Reef_1, Site, Depth, Site_Depth, dCT, T_ID)) |> 
+  as.matrix()
+```
+
+## Store list of predictors - this is going to be our x variable
+TID sampling scale
+
+```{r}
+env_boral_TID <- 
+  preds |> 
+  select(Region, Reef_1, Site,
+         Reef_1_Area, Reef_100, Reef_size,
+         Depth, Site_Depth,
+         dCT, dGBR,
+         T_ID) |> 
+  distinct() |> 
+  as.data.frame() |> 
+  mutate(Region = fct_relevel(Region, "Central"))
+```
+
+
+# Set mcmc control parameters
+```{r}
+mcmc.control. <- list(n.burnin = 1000,
+                      n.iteration = 7000,
+                      n.thin = 30,
+                      seed = 123)
+```
+
+
+
+# Fit boral model with region predictor variable
+
+```{r}
+#boral_TID_reefsize <- boral(boral_matrix_TID, X = env_boral_TID, family="negative.binomial",
+#                   formula.X = ~ Reef_size,
+#                   #ranef.ids = env_boral_TID$Site,
+#                   row.eff = "random",
+#                   mcmc.control = mcmc.control.,
+#                   lv.control = list(num.lv = 2),
+#                   save.model = TRUE)
+#save(boral_TID_reefsize, file = "data/Rdata/boral_TID_reefsize.rda")
+#load(file = "data/Rdata/boral_TID_reefsize.rda")
+
+```
+
+
+
+# Model diagnostics
+
+# Residuals
+```{r}
+plot(boral_TID_reefsize)
+```
+
+
+# Check geweke diagnostics (chain convergence)
+```{r}
+# Raw geweke diagnostics
+boral_TID_reefsize$geweke.diag
+
+#geweke.plot(boral_TID_reefsize$jags.model)
+
+#geweke.diag(get.mcmcsamples(boral_TID_reefsize))
+
+#get.mcmcsamples(boral_TID_reefsize) %>% geweke.plot()
+
+# Adjusted for multiple comparisons
+gew.pvals <- 2*pnorm(abs(unlist(boral_TID_reefsize$geweke.diag[[1]])), lower.tail = FALSE) %>%  p.adjust(method = "holm")
+#p.adjust(gew.pvals, method = "holm")
+```
+
+
+#
+
+# For (slightly) better plotting we can use ggboral:
+Compare to native plot
+```{r}
+gg_lvsplot(boral_TID_reefsize, include = "both")
+lvsplot(boral_TID_reefsize, cex = 0.8)
+```
+
+
+
+# Can also "hack" ggboral to extract site and species scores:
+First need to make the plots:
+```{r}
+sites_plot_TID_reefsize <- gg_lvsplot(boral_TID_reefsize, include = "objects", scaling = 1.2)
+species_plot_TID_reefsize <- gg_lvsplot(boral_TID_reefsize, include = "attributes", scaling = 0.8)
+```
+
+# Compare to native plot
+```{r}
+sites_plot_TID_reefsize
+species_plot_TID_reefsize
+lvsplot(boral_TID_reefsize, cex = 0.8, biplot = FALSE)
+```
+
+# Extract scores
+
+## Species scores
+```{r}
+spec_scores_TID_reefsize <- species_plot_TID_reefsize$data
+```
+
+## Site scores
+```{r}
+site_scores_TID_reefsize <- sites_plot_TID_reefsize$data %>% 
+  bind_cols(env_boral_TID)
+```
+
+
+# Filter species scores for only significant taxa from mvabund
+```{r}
+spec_scores_TID_reefsize <- 
+  spec_scores_TID_reefsize %>% 
+  rename(Binomial = label) %>% 
+  left_join(
+    reefsize_uni_contrasts) |>  # Need to run mvabund Rmd to get this 
+  filter(P <= 0.05)
+```
+
+# Plot
+```{r}
+ggplot(site_scores_TID_reefsize, aes(x = lv1, y = lv2)) +
+  geom_point(aes(colour = Reef_size)) +
+  ggforce::geom_mark_hull(aes(colour = Reef_size),expand=0.02, concavity = 5) + 
+  geom_point(data = spec_scores_TID_reefsize) +
+  theme_bjc() +
+  facet_wrap(~ Reef_size)
+```
+
+
+
+
+
+```{r}
+# Mean values
+Xcoefs_mean <-
+  boral_TID_reefsize$X.coefs.mean |> 
+  as.matrix() |> 
+  as.data.frame() |> 
+  rownames_to_column(var = "Species")  |> 
+  pivot_longer(cols = !Species, names_prefix = "Region", names_to = "Region", values_to = "Mean")
+
+# Median values
+Xcoefs_median <-
+  boral_TID_reefsize$X.coefs.median |> 
+  as.matrix() |> 
+  as.data.frame() |> 
+  rownames_to_column(var = "Species")  |> 
+  pivot_longer(cols = !Species, names_prefix = "Region", names_to = "Region", values_to = "Median")
+    
+# Lower CI
+Xcoefs_lowerHPD <- 
+boral_TID_reefsize$hpdintervals$X.coefs |> 
+  as.data.frame()  |> 
+  rownames_to_column(var = "Species") |> 
+  select(!4:5) |> 
+  pivot_longer(cols = !Species, names_prefix = "Region", names_pattern = "(.*).lower", names_to = "Region", values_to = "lower.HPD")
+
+# Upper CI
+Xcoefs_upperHPD <- 
+boral_TID_reefsize$hpdintervals$X.coefs |> 
+  as.data.frame()  |> 
+  rownames_to_column(var = "Species") |> 
+  select(!2:3) |> 
+  pivot_longer(cols = !Species, names_prefix = "Region", names_pattern = "(.*).upper", names_to = "Region", values_to = "upper.HPD")
+```
+
+# Combine
+```{r}
+Xcoefs <- 
+  Xcoefs_median |> 
+  full_join(Xcoefs_lowerHPD) |> 
+  full_join(Xcoefs_upperHPD) |> 
+  mutate_if(is.character, as.factor)
+```
+
+# Now we could use some higher taxonomy info for plotting
+
+# Create family order/index
+```{r}
+family_order <- 
+  preds |> 
+  select(Family) |> 
+  distinct() |> 
+  arrange(Family) |> 
+  mutate(Fam_Ord = seq(1,22,1))
+```
+
+# Get family info from preds
+```{r}
+family_info <- 
+  preds |> 
+  select(Family, Binomial) |> 
+  distinct() |> 
+  rename(Species = Binomial) |> 
+  left_join(family_order) # And add the order back in 
+```
+
+
+# Extract just the significant differences
+```{r}
+sigXcoefs <- Xcoefs |> 
+  left_join(family_info) |> 
+      left_join(family_info) |> 
+  mutate(TestA = ifelse(lower.HPD < 0, -1, 0),
+         TestB = ifelse(upper.HPD > 0, 1, 0),
+         Flag = TestA+TestB) |> 
+  filter(Flag != 0) |> 
+  mutate(Species = fct_reorder(Species, Fam_Ord)) 
+```
+
+
+
+
+# Plot significant taxa
+```{r}
+sigXcoefs |> 
+  ggplot(aes(x = Species, y = Median)) +
+  geom_pointrange(aes(ymin = lower.HPD, ymax = upper.HPD, colour = Family)) +
+  geom_point(aes(fill = Family), pch = 21, colour = "black", size = 3) +
+  geom_hline(yintercept = 0, lty = 11) +
+  scale_fill_viridis_d() +
+  scale_colour_viridis_d() +
+  coord_flip() +
+  theme_minimal() +
+  theme(axis.text.x = element_blank()) +
+  facet_wrap(~ Region)
+```
+
+## Next, we'll marry this up with lob_preds to demonstrate abundance with depth for each taxon
+
+# Extract significant taxa
+```{r}
+sig_taxa <- 
+sigXcoefs |> 
+  select(Species) %>% 
+  distinct()  |> 
+  mutate(Species = as.character(Species)) |> 
+  arrange(Species)
+sig_taxa
+```
+
+
+```{r}
+sig_preds <- 
+  sig_taxa |> 
+  select(Species) %>% 
+  distinct() %>% 
+  rename(Binomial = Species) %>% 
+  left_join(preds)
+```
+
+
+```{r}
+sig_predsum <- 
+   sig_preds  %>% 
+   group_by(Reef_size, Reef_1, Binomial) %>%
+   summarise(No_Preds =sum(Number)) %>%  # All good - 514
+   ungroup() %>% 
+  complete(Reef_size, Binomial, Reef_1) %>% 
+  mutate(No_Preds = replace_na(No_Preds, 0))
+```
+
+```{r}
+sig_predsum2 <- sig_predsum %>% 
+  group_by(Reef_size, Binomial) %>%
+  summarise(mean = mean(No_Preds),
+            sd = sd(No_Preds, na.rm = TRUE),
+            SE = std.error(No_Preds, na.rm = TRUE)) %>% 
+  arrange(-mean) %>% 
+  arrange(Reef_size) 
+```
+
+
+
+
+```{r fig.width=360/25.4, fig.height=100/25.4}
+sig_abun_plot <- 
+sig_predsum2 %>% 
+  ggplot(aes(x = Reef_size, y = mean, fill = Reef_size)) +
+  geom_line(aes(group = 1)) +
+  geom_linerange(aes(ymin = mean - SE, ymax = mean + SE)) +
+  geom_point(pch = 21, size = 2) +
+  scale_y_continuous(name = "Mean abundance ± SE") +
+  theme_bjc() +
+  theme(legend.title = element_blank(),
+        legend.position = "right",
+        legend.direction = "vertical",
+        axis.text = element_blank(),
+        strip.text.x = element_text(face = "italic")) +
+  facet_wrap(~ Binomial, nrow = 3, scales = "free_y")
+
+sig_abun_plot
+```
+
+
+
+
