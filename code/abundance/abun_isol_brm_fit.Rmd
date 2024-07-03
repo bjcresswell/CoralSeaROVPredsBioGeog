@@ -1,0 +1,279 @@
+---
+title: "Abundance modelling - Isolation"
+author: "Ben Cresswell"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: 
+ html_document:
+    code_folding: show
+    collapse: no
+    df_print: paged
+    fig_caption: yes
+    fig_height: 6
+    fig_width: 10
+    highlight: textmate
+    theme: spacelab
+    toc: yes
+    toc_float: yes
+editor_options: 
+  chunk_output_type: inline
+---
+
+
+```{r setup, include=FALSE}
+# Set options, housekeeping
+knitr::opts_chunk$set(
+	echo = FALSE,
+	include = TRUE,
+	message = FALSE,
+	warning = FALSE)
+#rm(list=ls()) # Clear out environment if necessary
+```
+
+
+
+# Load predsum data
+```{r message=FALSE, warning=FALSE, include=FALSE}
+source("code/packages.R")
+sourceRmd("code/abundance/diw_abund.Rmd")
+load('data/Rdata/rmetadata.Rdata')
+source("code/helper_functions.R")
+```
+
+# Check
+```{r}
+predsum
+```
+
+
+# Format of data:
+predsum is a tibble with each row = 1 transect of ROV predatory fish observations, summarised for total preds observed (No_Preds, i.e. abundance)
+
+To tease out the effect of isolation on predator abundance we will combine two predictor variables in one hierarchical effects model, with site as a varying effect
+
+-------------     ------------------------------------------------------------------------------
+**Reef_1_Area**       Size of the reef in kilohectares (kha)
+**Reef_100**          Amount of other reef within 100km (kha)
+-------------     ------------------------------------------------------------------------------
+
+
+
+## Response variable has a lot of zeros (160 transects with zero obs of predators):
+```{r}
+predsum |> tally(No_Preds == 0) |> pull()
+```
+
+
+## Can visualise the distribution by "bouncing" the zeros off the bottom of a histogram to make sense of this
+```{r fig.width=110/25.4}
+predsum |>  
+  mutate(is_zero = No_Preds == 0) |> 
+  mutate(No_Preds = ifelse(is_zero, -0.1, No_Preds)) |> 
+  ggplot(aes(x = No_Preds)) +
+  geom_histogram(aes(fill = is_zero), binwidth = 1, 
+                 boundary = 0, color = "white") +
+  geom_vline(xintercept = 0) +
+  #scale_x_continuous(labels = label_dollar(scale_cut = cut_short_scale())) +
+  scale_fill_manual(values = c("blue", "red"), 
+                    guide = guide_legend(reverse = TRUE)) +
+  labs(x = "Observations of predators", y = "Count", fill = "Is zero",
+       subtitle = "Right skew with many zeros") +
+  theme_minimal() +
+  theme(legend.position = c(0.5,0.5))
+```
+
+So we have count data which suggests poisson or neg binom, but heavily zero inflated by the look of things. Will try poisson but expecting nb with ZI model required. Poss even hurdle?
+
+
+
+# We also need to check multicolinearity of predictors
+```{r}
+car::scatterplotMatrix(~ No_Preds + Reef_100 + Reef_1_Area, 
+                       data = predsum, diagonal = list(method = 'boxplot'))
+```
+
+No_Preds - as we know, very right skewed
+dCT - looks ok. Colinear with Region for obvious reasons - see below
+dGBR - looks ok, also colinear with Region (the further south the region, the further away it tends to be from the GBR)
+Depth - we know we have more transects from shallower depths but as this is a categorical predictor the model should handle this
+Isol - would need to log in a model
+Reef_1 - looks ok
+Reef_1_Area - looks ok
+Region - also looks ok but colinear with dCT and GBR - need to decide which (if any) to include
+
+
+
+
+## Set model formula
+```{r}
+#abun_isol_form <- bf(No_Preds ~scale(Reef_1_Area) * scale(log(Isol)), zi ~ 1, family = zero_inflated_poisson(link = "log")) # Nope!
+#abun_isol_form <- bf(No_Preds ~scale(Reef_1_Area) * scale(log(Isol)), zi ~ 1, family = zero_inflated_negbinomial(link = "log"))
+abun_isol_form <- bf(No_Preds ~ scale(Reef_1_Area) * scale(Reef_100) + (1|Site), zi ~ 1, family = zero_inflated_negbinomial(link = "log"))
+```
+
+## Check what priors we need to estimate
+```{r}
+get_prior(abun_isol_form, data = predsum)
+```
+
+
+
+
+## Use data properties to help set weakly informative priors
+```{r}
+predsum |> 
+  summarise(median = median(No_Preds), MAD = mad(No_Preds), mean = mean(No_Preds), sd = sd(No_Preds), logmedian = log(median(No_Preds)), 
+            logMAD = log(mad(No_Preds)), logmean = log(mean(No_Preds)), logsd = log(sd(No_Preds)))
+```
+
+
+## Set priors
+```{r}
+abun_isol_priors <-  
+  prior(normal(2.5, 2.5), class = 'Intercept') +
+  prior(normal(0, 0.25), class = 'b') +
+  prior(gamma(2, 2), class = 'shape') +
+  prior(logistic(0, 1), class = 'Intercept', dpar = "zi")
+```
+
+
+
+## Fit model
+```{r}
+abun_isol_mod1 <- 
+  brm(abun_isol_form,
+  data = predsum,
+  prior = abun_isol_priors,
+  sample_prior = 'only',              
+  chains = 3,
+  cores = 3,
+  iter = 5000, 
+  warmup = 1000, 
+  thin = 4,
+  seed = 1234,
+  silent = 0,
+  refresh = 0,
+  backend = "cmdstanr")
+
+```
+
+
+## Check prior width
+```{r fig.width=140/25.4}
+#abun_isol_mod1 |> SUYR_prior_and_posterior()
+abun_isol_mod1 |> conditional_effects() |> plot(ask = FALSE, points = TRUE)
+```
+
+Looks like they should be wide enough. Fit the data and do pp checks
+
+
+# Fit model with data
+```{r}
+abun_isol_mod2 <- abun_isol_mod1 |> update(sample_prior = "yes", control = list(adapt_delta = 0.99, max_treedepth = 20),
+                                           cores = 3, seed = 1234, refresh = 0)
+```
+
+
+# Check influence of priors
+```{r}
+abun_isol_mod2 |> SUYR_prior_and_posterior()
+```
+
+
+
+
+
+# Model validation
+
+## DHARMa residuals
+```{r}
+resids <- make_brms_dharma_res(abun_isol_mod2, integerResponse = FALSE)
+testUniformity(resids)
+plotResiduals(resids, form = factor(rep(1, nrow(predsum))))
+plotResiduals(resids, quantreg = TRUE)
+testDispersion(resids) # Dispersion plot (dispersion = variance/mean) - we assume mean and variance are the same, so we need to check
+```
+
+
+## Chain checks
+
+```{r}
+# Trace plot
+mcmc_plot(abun_isol_mod2, type='trace')
+stan_trace(abun_isol_mod2$fit)
+# Autocorrelation
+mcmc_plot(abun_isol_mod2, type='acf_bar')
+stan_ac(abun_isol_mod2$fit)
+# Rhat - how well the chains converged
+mcmc_plot(abun_isol_mod2, type='rhat_hist')
+# Percentage effectives - needs to be greater than 0.5
+mcmc_plot(abun_isol_mod2, type='neff_hist')
+
+# Others
+mcmc_plot(abun_isol_mod2, type='dens_overlay')
+mcmc_plot(abun_isol_mod2, type='nuts_acceptance')
+mcmc_plot(abun_isol_mod2, type='nuts_energy')
+```
+
+
+
+## PP checks
+```{r}
+# Exponential
+pp_check(abun_isol_mod2, ndraws = 250,)
+
+# Logged
+pred <- posterior_predict(abun_isol_mod2)
+bayesplot::ppc_dens_overlay(y = log1p(predsum$No_Preds), 
+                            yrep = log1p(pred[1:100,]))
+```
+y = the observed data
+yrep = the predictive(posterior) distribution
+These follow approximate trends, so we'll go with it for now.
+
+
+# Check R2
+```{r}
+bayes_R2(abun_isol_mod2)
+```
+
+
+# Final model
+```{r}
+abun_isol_mod_final <- abun_isol_mod2
+save(abun_isol_mod_final, file = "data/Rdata/mod_data/abun_isol_mod_final.Rdata")
+```
+
+
+
+
+
+# Model investigation 
+## Conditional effects plot again to aid interpretation
+```{r}
+abun_isol_mod2 |> conditional_effects() |> plot(ask = FALSE, points = FALSE) # Without raw data
+abun_isol_mod_final |> conditional_effects() |> plot(ask = FALSE, points = TRUE) # With raw data overplotted
+```
+
+## Summary table
+```{r}
+abun_isol_mod2 |> 
+  as_draws_df() |>    # Extract draws
+  exp() |>            # Back transform
+  summarise_draws(median,
+                  HDInterval::hdi,
+                  rhat, ess_bulk, ess_tail,
+                  Pl = ~mean(.x <1),                       # Exceedence prob - on exp scale it's sig if doesn't cross 1
+                  Pg = ~mean(.x >1))|> 
+  as_tibble() |> 
+  mutate(median = round(median, 3),
+         lower = round(lower, 3),
+         upper = round(upper, 3))
+```
+
+### Interpretation:
+
+- At the average reef size and isolation (the intercept) the median number of predatory fishes is roughly 3 per transect 95% HDI [1.7-4.4]
+- For every 1 unit increase in reef size there is a decrease of ~30% with strong evidence that this is a real effect (Pl = 0.99)
+- No effect of physical isolation on abundance
+- No evidence of an interaction (0.6:0.4)
+

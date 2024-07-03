@@ -1,0 +1,426 @@
+---
+title: "Abundance modelling - Isolation"
+author: "Ben Cresswell"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: 
+ html_document:
+    code_folding: show
+    collapse: no
+    df_print: paged
+    fig_caption: yes
+    fig_height: 6
+    fig_width: 10
+    highlight: textmate
+    theme: spacelab
+    toc: yes
+    toc_float: yes
+editor_options: 
+  chunk_output_type: inline
+---
+
+
+```{r setup, include=FALSE}
+# Set options, housekeeping
+knitr::opts_chunk$set(
+	echo = FALSE,
+	include = TRUE,
+	message = FALSE,
+	warning = FALSE)
+#rm(list=ls()) # Clear out environment if necessary
+```
+
+
+
+# Packages
+```{r message=FALSE, warning=FALSE, include=FALSE}
+source("code/packages.R")
+source('code/helper_functions.R')
+source('code/extras.R')
+```
+
+# Load model and data
+```{r}
+load(file = "data/Rdata/abun_isol_mod_final.Rdata")
+load(file = "data/Rdata/predsum.Rdata")
+```
+
+```{r}
+abun_isol_mod_final
+```
+
+
+# Model investigation 
+## Conditional effects plot again to aid interpretation
+```{r}
+abun_isol_mod_final |> conditional_effects() |> plot(ask = FALSE, points = FALSE) # Without raw data
+#abun_isol_mod_final |> conditional_effects() |> plot(ask = FALSE, points = TRUE) # With raw data overplotted
+```
+
+## Summary table
+```{r}
+abun_isol_mod_final |> 
+  as_draws_df() |>    # Extract draws
+  exp() |>            # Back transform
+  summarise_draws(median,
+                  HDInterval::hdi,
+                  rhat, ess_bulk, ess_tail,
+                  Pl = ~mean(.x <1),                       # Exceedence prob - on exp scale it's sig if doesn't cross 1
+                  Pg = ~mean(.x >1))|> 
+  as_tibble() |> 
+  mutate(median = round(median, 3),
+         lower = round(lower, 3),
+         upper = round(upper, 3))
+```
+
+### Interpretation:
+
+- At the average reef size and isolation (the intercept) the median number of predatory fishes is 3 per transect 95% HDI [1.9-4.3]
+- For every 1 unit increase in reef size there is a decrease of ~30% with strong evidence that this is a real effect (Pl = 0.95)
+- For every 1 unit increase in amount of reef within 100km there is a ~20% increase in abundance, with evidence of a real effect (Pg = 0.85)
+- There is *no evidence of an interaction* between these (0.53:0.47)
+
+
+## emmeans and contrasts
+Will compare abundance at max and min values of both predictors
+
+```{r}
+predsum |> 
+  summarise(min_Reef_1_Area = min(Reef_1_Area),
+            max_Reef_1_Area = max(Reef_1_Area),
+            min_Reef100 = min(Reef_100),
+            max_Reef100 = max(Reef_100))
+```
+
+# Make dataframe with data points:
+```{r}
+newdata <- data.frame(Reef_1_Area = c(1.25, 26.4),
+                      Reef_100 = c(1, 32.6))
+```
+
+
+# Reef Area
+
+## Check amounts at each end to help guide interpretation
+```{r}
+abun_isol_mod_final |> 
+  emmeans(~ Reef_1_Area, at = newdata, type = "response") 
+```
+## So on average we have about 5 predators per transect at the smallest reefs and 1.5 per transect at the largest reefs. So we should have a difference in No_preds of ~4 when we look at contrasts:
+```{r}
+abun_isol_mod_final |> 
+  emmeans(~ Reef_1_Area, at = newdata, type = "link")  |> 
+  regrid() |> 
+  pairs(reverse = FALSE)
+```
+
+
+## Yep: 
+3.72 more predators per transect. 5.29/1.56 = about a 3 fold increase from largest to smallest reef, so let's see how that comes out as a ratio:
+```{r}
+abun_isol_mod_final |> 
+  emmeans(~ Reef_1_Area, at = newdata, type = "response") |> 
+  pairs(reverse = FALSE)
+```
+
+
+Yep, a ~3:1 ratio, equating to 3 x increase in predator numbers going from largest - smallest reef. As it's a Bayesian model we can also extract the probability of an increase) via gather draws:
+
+```{r}
+abun_isol_mod_final |> 
+  emmeans(~ Reef_1_Area, at = newdata, type = "link") |> 
+  pairs(reverse = FALSE) |> 
+  gather_emmeans_draws() |> 
+  summarise(median_hdci(exp(.value)), Pg = mean(.value >0))
+```
+
+
+0.99 probability of more predators on smallest reef compared to largest reef
+
+
+
+# Same procedure for Reef_100
+
+## Check amounts at each end to help guide interpretation
+```{r}
+abun_isol_mod_final |> 
+  emmeans(~ Reef_100, at = newdata, type = "response") %>% 
+  as_tibble()
+```
+
+Looks like the most connected reefs have more predators per transect, but likely non-significant
+
+```{r}
+abun_isol_mod_final |> 
+  emmeans(~ Reef_100, at = newdata, type = "link")  |> 
+  regrid() |> 
+  pairs(reverse = TRUE) %>% 
+  as_tibble()
+```
+
+
+## Yep, but non-significant, even in Bayesian terms:
+```{r}
+abun_isol_mod_final |> 
+  emmeans(~ Reef_100, at = newdata, type = "link") |> 
+  pairs(reverse = TRUE) |> 
+  gather_emmeans_draws() |> 
+  summarise(median_hdci(exp(.value)), Pg = mean(.value >0))
+```
+
+
+No evidence in support of this effect (P = 0.61)
+
+
+
+## Figures
+
+# Reef area
+
+## Effect of reef size among different isolation levels
+```{r}
+reefarea_grid <- with(predsum, list(Reef_1_Area = seq(from = min(Reef_1_Area), to = max(Reef_1_Area), len = 100)))
+```
+
+# Reef size/area - from emmeans 
+```{r fig.height=70/26.5, fig.width=110/25.4}
+#reefarea_abun_trend <- 
+  abun_isol_mod_final |> 
+  emmeans(~ Reef_1_Area, at = reefarea_grid, type = "response") |>
+  as_tibble() |> 
+  ggplot() +
+  geom_ribbon(aes(x = Reef_1_Area, ymin = lower.HPD, ymax = upper.HPD), fill = "#cc0000", alpha = 1) +
+  geom_line(aes(x = Reef_1_Area, y = prob)) +
+  labs(x = "Reef size (kha)",
+       y = "No. preds (n.150m2)") +
+  #scale_fill_manual(name = "Isolation", values = c("#fa2600", "#ff6347", "#ffa494") ) +
+ # scale_colour_manual(name = "Isolation") +
+  scale_y_continuous() +
+  theme_bjc() +
+  theme(axis.text = element_text(colour = "black", size = 9),
+        axis.title = element_text(colour = "black", size = 10),
+        strip.text = element_text(colour = "black", size = 9),
+        plot.title = element_text(size = 10, hjust = 0.5),
+        legend.position = "none") 
+#reefarea_abun_trend
+```
+
+# Reef size/area - using draws
+```{r fig.height=70/26.5, fig.width=110/25.4}
+reefarea_abun_trend <- 
+abun_isol_mod_final |> 
+  emmeans(~ Reef_1_Area, epred = TRUE,
+           at = reefarea_grid) |> 
+  gather_emmeans_draws() |> 
+  ggplot(aes(x = Reef_1_Area, y = .value)) +
+  #geom_point(data = predsum %>% filter(No_Preds != 0) %>% filter(No_Preds <15), aes(x = Reef_1_Area, y = No_Preds), fill = "#cc0000", colour = "#cc0000", pch = 21, alpha = 0.3)+
+  stat_lineribbon(colour = "black", fill = "#cc0000", size = 0.5, point_interval = "median_hdci", .width = 0.95, alpha = 0.5) +
+  stat_lineribbon(colour = "black", fill = "#cc0000", size = 0.5, point_interval = "median_hdci", .width = 0.8, alpha = 1) +
+  scale_y_continuous("No. preds (.150m2)", expand = c(0.05,0)) +
+  scale_x_continuous("Reef area (kha)") + 
+  theme_bjc() +
+  theme(axis.title.x = element_text(colour = "black", size = 10),
+        axis.title.y = element_text(colour = "black", size = 10, hjust = -0.01),
+        axis.text = element_text(colour = "black", size = 9),
+        legend.position = "none")
+
+reefarea_abun_trend
+```
+
+
+# Probability distribution of effect size
+```{r fig.width = 70/25.4, fig.height=50/25.4}
+reefarea_abun_effect <- 
+abun_isol_mod_final |> 
+  gather_draws(`^b_.*`, regex=TRUE) |>   # Need to use gather_draws here if you want to use the regex
+  filter(.variable == 'b_scaleReef_1_Area') |>
+  ungroup() |> 
+  ggplot(aes(x = .value)) + 
+  stat_halfeye(fill = "#cc0000", .width = c(0.8, 0.95), point_interval = "median_hdi") +
+  geom_vline(xintercept = 0, lty = 11) +
+  annotate(geom = "text", label = "P=0.99", x = -1, y = 0.8, colour = "black", size = 3.5, family = "Arial", hjust = 0) +
+  scale_y_discrete(expand = c(0.05,0)) +
+  scale_x_continuous("Scaled effect distribution", breaks = c(-1, -0.5, 0)) +
+  theme_bjc() +
+  theme(axis.title.y = element_blank(),
+        axis.title.x = element_text(colour = "black", size = 10),
+        axis.text.y = element_blank(),
+        axis.text.x = element_text(colour = "black", size = 9),
+        legend.position = "none")
+
+reefarea_abun_effect
+```
+
+
+# Contrast: largest - smallest reef
+```{r fig.width = 40/25.4, fig.height=50/25.4}
+abun_area_contrast <- abun_isol_mod_final |> 
+  emmeans(~ Reef_1_Area, at = newdata, type = "link") |> 
+  pairs(reverse = FALSE) |> 
+  gather_emmeans_draws() |> 
+  summarise(median_hdci(exp(.value), .width = c(0.8, 0.95)),
+            Pl = mean(.value < 0),
+            Pg = mean(.value > 0))
+
+
+
+reefarea_abun_full_contrast <- 
+ggplot() +
+  geom_pointrange(aes(y = y, ymin = ymin, ymax = ymax, x = contrast), data = abun_area_contrast |> filter(.width == 0.8), linewidth = 1.7) +
+  geom_pointrange(aes(y = y, ymin = ymin, ymax = ymax, x = contrast), data = abun_area_contrast |> filter(.width == 0.95), pch = 21, size = 1.2, fill = "#cc0000", linewidth = 0.7) +
+  geom_hline(yintercept = 1, lty = 11) +
+  theme_bjc() +
+  scale_y_continuous("Contrast ratio (max-min)", limits = c(0, 6), breaks = c(0,2,4)) +
+  scale_x_discrete("Abundance contrast") +
+   theme(axis.title = element_text(colour = "black", size = 10),
+        axis.text.x = element_blank(),
+        axis.text.y = element_text(colour = "black", size = 9),
+        legend.position = "none")
+
+reefarea_abun_full_contrast
+
+```
+
+# Save
+```{r}
+ggsave(filename = "output/reefarea_abun_full_contrast.pdf", plot = reefarea_abun_full_contrast, width = 50, height = 55, device = cairo_pdf, units = "mm", dpi = 300)
+```
+
+
+
+
+
+# Combine
+```{r fig.width = 150/25.4, fig.height=55/25.4}
+reefarea_abun_fig <- 
+  cowplot::plot_grid(reefarea_abun_trend, reefarea_abun_effect, 
+                     nrow = 1, labels = c("a", "b"), rel_widths = c(1.2, 0.6), label_size = 10, align = "h") +
+  theme(plot.background = element_rect(color = "black"))
+reefarea_abun_fig
+```
+
+
+# Save
+```{r}
+ggsave(filename = "output/reefarea_abun_fig.pdf", plot = reefarea_abun_fig, width = 150, height = 55, device = cairo_pdf, units = "mm", dpi = 300)
+```
+
+
+
+# Reef 100km 
+
+# Make grid
+```{r}
+reef100_grid <- with(predsum, list(Reef_100 = seq(from = min(Reef_100), to = max(Reef_100), len = 100)))
+```
+
+
+# Reef 100km - using draws 
+```{r fig.height=70/26.5, fig.width=110/25.4}
+reef100_abun_trend <- 
+abun_isol_mod_final |> 
+  emmeans(~ Reef_100, epred = TRUE,
+           at = reef100_grid) |> 
+  gather_emmeans_draws() |> 
+  ggplot(aes(x = Reef_100, y = .value)) +
+  stat_lineribbon(colour = "black", fill = "#009933",  size = 0.5, point_interval = "median_hdci", .width = 0.95, alpha = 0.5) +
+  stat_lineribbon(colour = "black", fill = "#009933", size = 0.5, point_interval = "median_hdci", .width = 0.8, alpha = 1) +
+  scale_y_continuous("No. preds (.150m2)", expand = c(0.05,0)) +
+  scale_x_continuous("Reef within 100km (kha)") + 
+  theme_bjc() +
+  theme(axis.title.x = element_text(colour = "black", size = 10),
+        axis.title.y = element_text(colour = "black", size = 10, hjust = -0.01),
+        axis.text = element_text(colour = "black", size = 9),
+        legend.position = "none")
+
+reef100_abun_trend
+```
+
+# Probability distribution of effect size
+```{r fig.width = 70/25.4, fig.height=50/25.4}
+reef100_abun_effect <- 
+abun_isol_mod_final |> 
+  gather_draws(`^b_.*`, regex=TRUE) |>   # Need to use gather_draws here if you want to use the regex
+  filter(.variable == 'b_scaleReef_100') |>
+  ungroup() |> 
+  ggplot(aes(x = .value)) + 
+  stat_halfeye(fill = "#009933", .width = c(0.80, 0.95), point_interval = "median_hdi") +
+  geom_vline(xintercept = 0, lty = 11) +
+  annotate(geom = "text", label = "P=0.62", x = 0.2, y = 0.8, colour = "black", size = 3.5, family = "Arial", hjust = 0) +
+  scale_y_discrete(expand = c(0.05,0)) +
+  scale_x_continuous("Scaled effect distribution", breaks = c( 0, 0.5)) +
+  theme_bjc() +
+  theme(axis.title.y = element_blank(),
+        axis.title.x = element_text(colour = "black", size = 10),
+        axis.text.y = element_blank(),
+        axis.text.x = element_text(colour = "black", size = 9),
+        legend.position = "none")
+
+reef100_abun_effect
+```
+
+
+# Combine
+```{r fig.width = 150/25.4, fig.height=55/25.4}
+reef100_abun_fig <- 
+  cowplot::plot_grid(reef100_abun_trend, reef100_abun_effect, 
+                     nrow = 1, labels = c("a", "b"), rel_widths = c(1.2, 0.6), label_size = 10, align = "h") +
+  theme(plot.background = element_rect(color = "black"))
+reef100_abun_fig
+```
+
+
+# Save
+```{r}
+ggsave(filename = "output/reef100_abun_fig.pdf", plot = reef100_abun_fig, width = 150, height = 55,  device = cairo_pdf, units = "mm", dpi = 300)
+```
+
+
+
+# Contrast: most to least spatially isolated reef reef
+```{r fig.width = 40/25.4, fig.height=50/25.4}
+reef100_abun_contrast <- abun_isol_mod_final |> 
+  emmeans(~ Reef_100, at = newdata, type = "link") |> 
+  pairs(reverse = TRUE) |> 
+  gather_emmeans_draws() |> 
+  summarise(median_hdci(exp(.value), .width = c(0.8, 0.95)), Pg = mean(.value >0))
+  
+abun_isol_mod_final |> 
+  emmeans(~ Reef_100, at = newdata, type = "link") |> 
+  pairs(reverse = FALSE) |> 
+  regrid() |> 
+  gather_emmeans_draws() |> 
+  summarise(median_hdci(exp(.value), .width = c(0.8, 0.95)),
+            Pl = mean(.value < 0),
+            Pg = mean(.value > 0))
+
+```
+
+
+```{r fig.width = 40/25.4, fig.height=50/25.4}
+reef100_abun_full_contrast <- 
+ggplot() +
+  geom_hline(yintercept = 1, lty = 11) +
+  geom_pointrange(aes(y = y, ymin = ymin, ymax = ymax, x = contrast), data = reef100_abun_contrast |> filter(.width == 0.8), linewidth = 1.7) +
+  geom_pointrange(aes(y = y, ymin = ymin, ymax = ymax, x = contrast), data = reef100_abun_contrast |> filter(.width == 0.95), pch = 22, size = 1.2, fill = "#009933", linewidth = 0.7) +
+  theme_bjc() +
+  scale_y_continuous("Contrast ratio (max-min)", limits = c(0, 6), breaks = c(0,2,4)) +
+  scale_x_discrete("Reef isolation contrast") +
+   theme(axis.title = element_text(colour = "black", size = 10),
+        axis.text.x = element_blank(),
+        axis.text.y = element_text(colour = "black", size = 9),
+        legend.position = "none")
+
+reef100_abun_full_contrast
+```
+
+# Save
+```{r}
+ggsave(filename = "output/reef100_abun_full_contrast.pdf", plot = reef100_abun_full_contrast, width = 50, height = 55, device = cairo_pdf, units = "mm", dpi = 300)
+```
+
+
+```{r}
+# END #
+```
+
+
