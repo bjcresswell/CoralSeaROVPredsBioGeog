@@ -1,0 +1,368 @@
+---
+title: "Abundance ~ biogeographic model results - depth excluded"
+author: "Ben Cresswell"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: 
+ html_document:
+    code_folding: show
+    collapse: no
+    df_print: paged
+    fig_caption: yes
+    #fig_height: 
+    fig_width: 140/25.4
+    highlight: textmate
+    theme: spacelab
+    toc: yes
+    toc_float: yes
+editor_options: 
+  chunk_output_type: inline
+---
+
+```{r setup, include=FALSE}
+# Set options, housekeeping
+knitr::opts_chunk$set(
+	echo = FALSE,
+	include = TRUE,
+	message = FALSE,
+	warning = FALSE)
+#rm(list=ls()) # Clear out environment if necessary
+```
+
+# Load packages
+```{r message=FALSE, warning=FALSE, include=FALSE}
+source("code/packages.R")
+source("code/extras.R")
+```
+
+# Load data
+```{r}
+load("data/Rdata/predsum.Rdata")
+load(file = "data/Rdata/abun_biogeo_model_nodep_final.Rda")
+load("data/Rdata/rmetadata.Rdata")
+```
+
+# Model investigation 
+
+## Conditional effects plot again to aid interpretation
+```{r}
+abun_biogeo_model_nodep_final |> conditional_effects() |> plot(ask = FALSE, points = FALSE) # Without raw data
+#abun_biogeo_model_nodep_final |> conditional_effects() |> plot(ask = FALSE, points = TRUE) # With raw data overplotted
+```
+
+## Summary table
+```{r}
+abun_biogeo_model_nodep_final |> 
+  as_draws_df() |>    # Extract draws
+  exp() |>            # Back transform
+  summarise_draws(median,
+                  HDInterval::hdi,
+                  rhat, ess_bulk, ess_tail,
+                  Pl = ~mean(.x <1),                       # Exceedence prob - on exp scale it's sig if doesn't cross 1
+                  Pg = ~mean(.x >1))|> 
+  as_tibble() |> 
+  mutate(median = round(median, 3),
+         lower = round(lower, 3),
+         upper = round(upper, 3))
+```
+
+## Summary
+No interaction or any effect of dCT or dGBR
+
+
+# If there were interactions, run the following, otherwise skip to the individual, marginal effects plots
+
+Find max and min values for dCT and dGBR
+```{r}
+rmetadata |> 
+  summarise(min_dCT = min(dCT),
+            max_dCT = max(dCT),
+            min_dGBR = min(dGBR),
+            max_dGBR = max(dGBR))
+```
+
+
+```{r}
+rmetadata |> 
+  summarise(median = median(dCT), Q1 = quantile(dCT, probs = 0.25), Q4 = quantile(dCT, probs = 0.95),
+            CI_05 = quantile(dCT, probs = 0.05), CI_95 = quantile(dCT, probs = 0.99))
+```
+
+
+
+
+
+# Make dataframe with data points:
+```{r}
+newdata <- data.frame(dCT = c(25, 1156),
+                      dGBR = c(48, 355))
+```
+
+
+```{r}
+abun_biogeo_model_nodep_final %>% 
+  emmeans(~ dCT|dGBR, at = newdata, type = "response") %>% 
+  as_tibble()
+
+```
+
+
+
+```{r}
+interact_data1 <- predsum |> 
+  with(list(dCT = seq(100, 1000, len = 100),
+            dGBR = c(50, 350)))
+```
+
+
+
+# If there were an interaction you could run this:
+
+```{r fig.width = 160/25.4, fig.height=55/25.4}
+interaction_plot1 <- 
+abun_biogeo_model_nodep_final |> 
+  emmeans(~ dCT|dGBR, type = 'link', 
+          epred = TRUE, 
+          at = interact_data1) |> 
+  regrid()  |> 
+  gather_emmeans_draws()  |> 
+  as_tibble() |>
+  mutate(dGBRf = as_factor(case_when(dGBR ==50 ~ "50km dGBR",
+                          dGBR == 350 ~ "350km dGBR"))) |> 
+  ggplot(aes(x = dCT, y = .value, fill = dGBRf)) +
+  stat_lineribbon(colour = "black", size = 0.5, point_interval = "median_hdci", .width = 0.95, alpha = 0.5) +
+  stat_lineribbon(colour = "black", size = 0.5, point_interval = "median_hdci", .width = 0.8, alpha = 1) +
+  scale_fill_brewer(type = "qual", palette = 'Accent')+
+  theme_bjc() +
+  scale_x_continuous("Distance from Coral Triangle (km)") +
+  scale_y_continuous("Est. no preds. 150m2", expand = c(0.05,0)) +
+  theme(axis.title = element_text(colour = "black", size = 10, family = "Arial"),
+        axis.text = element_text(colour = "black", size = 9, family = "Arial"),
+        strip.text = element_text(colour = "black", size = 10, family = "Arial"),
+        legend.position = "none") +
+  facet_wrap(~dGBRf)
+
+
+interaction_plot1
+```
+
+
+```{r}
+interact_data2 <- predsum |> 
+  with(list(dGBR = seq(50, 350, len = 100),
+            dCT = c(250, 750)))
+```
+
+
+
+```{r fig.width = 160/25.4, fig.height=55/25.4}
+interaction_plot2 <- 
+  abun_biogeo_model_nodep_final |> 
+  emmeans(~ dCT|dGBR, type = 'link', 
+          epred = TRUE, 
+          at = interact_data2) |> 
+  regrid()  |> 
+  gather_emmeans_draws()  |> 
+  as_tibble() |> 
+  mutate(dCTf = case_when(dCT ==250 ~ "250km dCT",
+                          dCT == 750 ~ "750km dCT")) |> 
+  ggplot(aes(x = dGBR, y = .value, fill = dCTf)) +
+  stat_lineribbon(colour = "black", size = 0.5, point_interval = "median_hdci", .width = 0.95, alpha = 0.5) +
+  stat_lineribbon(colour = "black", size = 0.5, point_interval = "median_hdci", .width = 0.8, alpha = 1) +
+  theme_bjc() +
+  scale_fill_brewer(type = "qual", palette = 'Set2')+
+  scale_x_continuous("Distance from GBR (km)") +
+  scale_y_continuous("Est. no preds. 150m2", expand = c(0.05,0)) +
+  theme(axis.title = element_text(colour = "black", size = 10, family = "Arial"),
+        axis.text = element_text(colour = "black", size = 9, family = "Arial"),
+        strip.text = element_text(colour = "black", size = 10, family = "Arial"),
+        legend.position = "none") +
+  facet_wrap(~dCTf)
+
+interaction_plot2
+```
+
+
+# Combine
+```{r fig.width = 160/25.4, fig.height=100/25.4}
+dCT_dGBR_abun_fig <- 
+  cowplot::plot_grid(interaction_plot1, interaction_plot2, 
+                     nrow = 2, labels = c("a", "b"), rel_heights = c(1, 1), label_size = 10, align = "h") +
+  theme(plot.background = element_rect(color = "black"))
+dCT_dGBR_abun_fig
+```
+
+
+# Save
+```{r}
+#ggsave(filename = "output/dCT_dGBR_abun_fig.pdf", plot = dCT_dGBR_abun_fig, width = 160, height = 100, device = cairo_pdf, units = "mm", dpi = 300)
+```
+
+
+
+
+### Run these if no interaction ###
+
+
+# Marginal effects plots
+
+# dCT
+
+# Make new data grid
+```{r}
+dCT_grid <- predsum |> 
+  with(list(dCT = seq_range(dCT, n = 100)))
+```
+
+
+# Trend ribbon plot
+```{r fig.height=60/26.5, fig.width=96/25.4}
+dCT_abun_trend <- 
+abun_biogeo_model_nodep_final |> 
+  emmeans(~ dCT|dGBR, type = 'link', 
+          epred = TRUE, 
+          at = dCT_grid) |> 
+  regrid()  |> 
+  gather_emmeans_draws()  |> 
+  as_tibble() |> 
+  ggplot(aes(x = dCT, y = .value)) +
+  stat_lineribbon(colour = "black", fill = "#C65894", size = 0.5, point_interval = "median_hdci", .width = 0.95, alpha = 0.5) +
+  stat_lineribbon(colour = "black", fill = "#C65894", size = 0.5, point_interval = "median_hdci", .width = 0.8, alpha = 1) +
+  theme_bjc() +
+  scale_x_continuous("Distance from Coral Triangle (km)") +
+  scale_y_continuous("No. preds (.150m2)", expand = c(0.05, 0)) +
+  theme(axis.text = element_text(colour = "black", size = 9),
+        axis.title = element_text(colour = "black", size = 10),
+ #       strip.text = element_text(colour = "black", size = 9),
+        #strip.text = element_blank(),
+        plot.title = element_text(size = 10, hjust = 0.5),
+        legend.position = "none") 
+
+dCT_abun_trend
+```
+
+
+# Effect size density plot
+```{r fig.width=56/25.4, fig.height=60/25.4}
+dCT_abun_effect <- 
+  abun_biogeo_model_nodep_final |> 
+  gather_draws(`^b_.*`, regex=TRUE)  |> 
+  filter(.variable == "b_scaledCT")   |> 
+  ungroup() %>% 
+  ggplot(aes(x = .value)) +
+  stat_halfeye(.width = c(0.8, 0.95), fill = "#C65894", point_interval = "median_hdi") +
+  theme_bjc() +
+  scale_y_discrete(position = "right", expand = c(0.05, 0)) +
+  annotate(geom = "text", label = "P=0.53", x = -0.4, y = 1, colour = "black", size = 3.5, family = "Arial", hjust = 0) +
+  scale_x_continuous(breaks = c(-0.5, 0, 0.5), limits = c(-0.5, 0.5)) +
+  geom_vline(xintercept = 0, lty = 11) +
+  theme(axis.title.y = element_blank(),
+        axis.title.x = element_text(colour = "black", size = 10),
+        axis.text.y.right = element_text(colour = "black", angle = 270, hjust = 1.2, size = 10),
+        axis.text.x = element_text(colour = "black", size = 9),
+        strip.text = element_blank()) +
+  guides(fill = "none") +
+  labs(x = "Scaled effect distribution")
+dCT_abun_effect
+```
+
+```{r fig.width = 150/25.4, fig.height=55/25.4}
+dCT_abun_fig <- 
+  cowplot::plot_grid(dCT_abun_trend, dCT_abun_effect, 
+                     nrow = 1, labels = c("a", "b"), rel_widths = c(1.2, 0.6), label_size = 10, align = "h") +
+  theme(plot.background = element_rect(color = "black"))
+dCT_abun_fig
+```
+# Save
+```{r}
+ggsave(filename = "output/dCT_abun_fig.pdf", plot = dCT_abun_fig, height = 60, width = 152, device = cairo_pdf, units = "mm", dpi = 300)
+```
+
+
+### dGBR
+
+# Make new data grid
+```{r}
+dGBR_grid <- predsum |> 
+  with(list(dGBR = seq_range(dGBR, n = 100)))
+```
+
+
+## Plot
+```{r fig.height=60/26.5, fig.width=96/25.4}
+dGBR_abun_trend <- 
+  abun_biogeo_model_nodep_final |> 
+  emmeans(~ dGBR, type = 'link',
+          epred = TRUE,
+           at = dGBR_grid)  |> 
+  regrid()  |> 
+  gather_emmeans_draws()  |> 
+  as_tibble() %>% 
+  ggplot(aes(x = dGBR, y = .value)) +
+  stat_lineribbon(colour = "black", fill = "#FFCD00", size = 0.5, point_interval = "median_hdci", .width = 0.95, alpha = 0.5) +
+  stat_lineribbon(colour = "black", fill = "#FFCD00", size = 0.5, point_interval = "median_hdci", .width = 0.85, alpha = 1) +
+  #scale_colour_viridis_d(option = "plasma", end = 0.8) +
+  #scale_fill_viridis_d(option = "plasma", end = 0.8) +
+  theme_bjc() +
+  scale_x_continuous("Distance from GBR (km)", limits = c(48, 355)) +
+  scale_y_continuous("No. preds (.150m2)", expand = c(0.05, 0)) +
+  theme(axis.text = element_text(colour = "black", size = 9),
+        axis.title = element_text(colour = "black", size = 10),
+ #       strip.text = element_text(colour = "black", size = 9),
+        #strip.text = element_blank(),
+        plot.title = element_text(size = 10, hjust = 0.5),
+        legend.position = "none") 
+
+dGBR_abun_trend 
+```
+
+
+# Effect size density plot
+```{r fig.width=56/25.4, fig.height=60/25.4}
+dGBR_abun_effect <- 
+  abun_biogeo_model_nodep_final |> 
+  gather_draws(`^b_.*`, regex=TRUE)  |> 
+  filter(.variable == "b_scaledGBR")   |> 
+  ungroup() %>% 
+  ggplot(aes(x = .value)) +
+  stat_halfeye(.width = c(0.85, 0.95), fill = "#FFCD00", point_interval = "median_hdi") +
+  theme_bjc() +
+  scale_y_discrete(position = "right", expand = c(0.05, 0)) +
+  scale_x_continuous(breaks = c(-0.5, 0, 0.5), limits = c(-0.5, 0.5)) +
+  annotate(geom = "text", label = "P=0.64", x = -0.4, y = 1, colour = "black", size = 3.5, family = "Arial", hjust = 0) +
+  geom_vline(xintercept = 0, lty = 11) +
+  theme(axis.title.y = element_blank(),
+        axis.title.x = element_text(colour = "black", size = 10),
+        axis.text.y.right = element_text(colour = "black", angle = 270, hjust = 1.2, size = 10),
+        axis.text.x = element_text(colour = "black", size = 9),
+        strip.text = element_blank()) +
+  guides(fill = "none") +
+  labs(x = "Scaled effect distribution")
+dGBR_abun_effect
+```
+
+```{r fig.width = 150/25.4, fig.height=55/25.4}
+dGBR_abun_fig <- 
+  cowplot::plot_grid(dGBR_abun_trend, dGBR_abun_effect, 
+                     nrow = 1, labels = c("a", "b"), rel_widths = c(1.2, 0.6), label_size = 10, align = "h") +
+  theme(plot.background = element_rect(color = "black"))
+dGBR_abun_fig
+```
+
+
+
+# Save
+```{r}
+ggsave(filename = "output/dGBR_abun_fig.pdf", plot = dGBR_abun_fig, height = 60, width = 152, device = cairo_pdf, units = "mm", dpi = 300)
+```
+
+
+```{r}
+# END #
+```
+
+
+
+
+
+
+

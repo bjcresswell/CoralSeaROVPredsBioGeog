@@ -1,0 +1,366 @@
+---
+title: "Abundance ~ biogeographic model results"
+author: "Ben Cresswell"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: 
+ html_document:
+    code_folding: show
+    collapse: no
+    df_print: paged
+    fig_caption: yes
+    #fig_height: 
+    fig_width: 140/25.4
+    highlight: textmate
+    theme: spacelab
+    toc: yes
+    toc_float: yes
+editor_options: 
+  chunk_output_type: inline
+---
+
+```{r setup, include=FALSE}
+# Set options, housekeeping
+knitr::opts_chunk$set(
+	echo = FALSE,
+	include = TRUE,
+	message = FALSE,
+	warning = FALSE)
+#rm(list=ls()) # Clear out environment if necessary
+```
+
+# Load packages
+```{r message=FALSE, warning=FALSE, include=FALSE}
+source("code/packages.R")
+source("code/extras.R")
+```
+
+# Load data
+```{r}
+load("data/Rdata/predsum.Rdata")
+load(file = "data/Rdata/abun_biogeo_model_nodep_final.Rda")
+```
+
+# Model investigation 
+
+## Conditional effects plot again to aid interpretation
+```{r}
+abun_biogeo_model_nodep_final |> conditional_effects() |> plot(ask = FALSE, points = FALSE) # Without raw data
+#abun_biogeo_model_nodep_final |> conditional_effects() |> plot(ask = FALSE, points = TRUE) # With raw data overplotted
+```
+
+## Summary table
+```{r}
+abun_biogeo_model_nodep_final |> 
+  as_draws_df() |>    # Extract draws
+  exp() |>            # Back transform
+  summarise_draws(median,
+                  HDInterval::hdi,
+                  rhat, ess_bulk, ess_tail,
+                  Pl = ~mean(.x <1),                       # Exceedence prob - on exp scale it's sig if doesn't cross 1
+                  Pg = ~mean(.x >1))|> 
+  as_tibble() |> 
+  mutate(median = round(median, 3),
+         lower = round(lower, 3),
+         upper = round(upper, 3))
+```
+
+## Summary
+Quite a complicated set of interactions here.
+
+In the shallows at average dCT and average dGBR there were just over 3 predators per transect (95% CI [2.072 - 4.622])
+The effect of depth varied depending on dCT and dGBR
+
+
+## Probably need a couple of figs here 
+
+
+
+# Make new data grid
+```{r}
+dCTgrid <- predsum |> 
+  with(list(dCT = c(150, 500, 850),
+            dGBR = median(dGBR)))
+```
+
+
+
+# dCT and Depth
+```{r fig.height=80/26.5, fig.width=150/25.4}
+dCT_depth_abun_plot <- 
+abun_biogeo_model_nodep_final |> 
+  emmeans(~ Depth|dCT, type = 'link', at = biogeogrid) |> 
+  regrid()  |> 
+  as_tibble() |> 
+  mutate(dCTkm = paste(dCT, "km", sep = "")) %>% 
+  ggplot(aes(x = Depth, y = prob)) +
+  geom_line(aes(group = 1)) +
+  geom_pointrange(aes(ymin = lower.HPD, ymax = upper.HPD, fill = Depth), pch = 21, size = 1, position = position_dodge(width = 0.2)) +
+  scale_shape_manual(values = c(21,22,24)) +
+  scale_fill_manual(values = websafe_bluepal) +
+  #scale_colour_manual(values = c("#006ad1", "#1e90ff", "#6bb6ff")) +
+  theme_bjc() +
+  facet_wrap(~dCTkm) +
+  theme(axis.text = element_text(colour = "black", size = 9),
+        axis.title = element_text(colour = "black", size = 10),
+ #       strip.text = element_text(colour = "black", size = 9),
+        #strip.text = element_blank(),
+        plot.title = element_text(size = 10, hjust = 0.5),
+        legend.position = "none") 
+dCT_depth_abun_plot
+```
+
+# Save
+```{r}
+ggsave(filename = "output/dCT_depth_abun_fig.pdf", plot = dCT_depth_abun_plot, height = 80, width = 150, device = cairo_pdf, units = "mm", dpi = 300)
+```
+
+
+# Plot depth emmeans and  contrasts at mean dCT and dGBR
+
+
+# emmeans
+```{r fig.height=80/26.5, fig.width=70/25.4}
+#depth_em <- 
+  abun_biogeo_model_nodep_final |> 
+  emmeans(~ Depth, type = "response") |> 
+  regrid()  |> 
+  as_tibble() |> 
+  ggplot(aes(x = Depth, y = prob)) +
+  geom_pointrange(aes(ymin = lower.HPD, ymax = upper.HPD, fill = Depth), pch = 21, size = 1) +
+  scale_fill_manual(values = websafe_bluepal) +
+  scale_y_continuous("Abundance (n preds.150m2)") +
+  theme_bjc() +
+  theme(axis.text = element_text(colour = "black", size = 9),
+        axis.title = element_text(colour = "black", size = 10),
+        plot.title = element_text(size = 10, hjust = 0.5),
+        legend.position = "none") 
+depth_em
+```
+
+
+## Contrasts
+```{r fig.height=80/26.5, fig.width=80/25.4}
+depth_contr <- 
+  abun_biogeo_model_nodep_final |> 
+  emmeans(~ Depth, type = "response") |> 
+ # regrid()  |> 
+  pairs() |> 
+  as_tibble() |> 
+  ggplot(aes(x = ratio, y = contrast)) +
+  geom_vline(xintercept = 1, lty = 11) +
+  geom_pointrange(aes(xmin = lower.HPD, xmax = upper.HPD), fill = "black", pch = 21, size = 1) +
+  scale_fill_manual(values = websafe_bluepal) +
+  scale_x_continuous("Contrast ratio", trans = "log2", limits = c(0.5, 2.1), breaks = c(0.5, 1, 2)) +
+  scale_y_discrete(position = "right", labels = c("Shallow -\nLower" ,"Shallow -\nUpper","Upper -\nLower")) +
+  theme_bjc() +
+  theme(axis.text = element_text(colour = "black", size = 9),
+        axis.title = element_text(colour = "black", size = 10),
+        axis.title.y = element_blank(),
+        plot.title = element_text(size = 10, hjust = 0.5),
+        legend.position = "none") 
+depth_contr
+```
+
+# Combine
+```{r fig.height=70/26.5, fig.width=120/25.4}
+depth_eff_combined <- 
+  cowplot::plot_grid(depth_em, depth_contr, labels = c('a', 'b'), rel_widths = c(1.1, 0.9))
+depth_eff_combined
+```
+
+# Save
+```{r}
+ggsave(filename = "output/depth_eff_combined.pdf", plot = depth_eff_combined, height = 70, width = 115, device = cairo_pdf, units = "mm", dpi = 300)
+```
+
+
+# Or if you want density plots
+```{r fig.width=55/25.4, fig.height=80/25.4}
+depth_dense_plot <- 
+  abun_biogeo_model_nodep_final |> 
+  emmeans(~  Depth,
+           #regrid = "response",  type = "response",
+          epred = TRUE) |>                              # At mean distance from GBR) %>% 
+  gather_emmeans_draws()  |> 
+  ungroup() %>% 
+  ggplot(aes(x = .value, y = Depth, fill = Depth)) +
+  stat_halfeye(.width = c(0.8, 0.95), point_interval = "median_hdi") +
+  theme_bjc() +
+  scale_fill_manual(values = websafe_bluepal) +
+  #scale_fill_viridis_d(option = "plasma", end = 0.8) +
+  scale_y_discrete(position = "right", expand = c(0.1, 0)) +
+  scale_x_continuous(limits = c(0,6)) +
+  theme(axis.title.y = element_blank(),
+        axis.title.x = element_text(colour = "black", size = 10),
+        axis.text.y.right = element_text(colour = "black", angle = 270, hjust = 1.2, size = 10),
+        axis.text.x = element_text(colour = "black", size = 9),
+        strip.text = element_blank()) +
+  guides(fill = "none") +
+  labs(x = "Mean predators.150m2") +
+  facet_wrap(~ Depth, ncol = 1, scales = "free_y")
+depth_dense_plot
+```
+
+
+
+## Trend plots ##
+
+### dGBR * Depth
+
+## Extract range 
+```{r}
+dGBR_range <- predsum %>% 
+  with(list(dGBR = seq_range(dGBR, n = 100)))
+```
+
+## Plot
+```{r fig.height=80/26.5, fig.width=100/25.4}
+abun_dGBR_trend <- 
+  abun_biogeo_model_nodep_final |> 
+  emmeans(~ dGBR | Depth, var = "dGBR",
+           #regrid = "response",  type = "response",
+          epred = TRUE,
+           at = dGBR_range) %>% 
+  gather_emmeans_draws() %>% 
+  as_tibble() %>% 
+  ggplot(aes(x = dGBR, y = .value)) +
+  #stat_lineribbon(colour = "black", fill = "#ccccff", size = 0.5, point_interval = "median_hdci", .width = 0.95, alpha = 0.6) +
+  #stat_lineribbon(colour = "black", fill = "#000099", size = 0.5, point_interval = "median_hdci", .width = 0.85, alpha = 0.9) +
+  stat_lineribbon(aes(fill = Depth), colour = "black",  size = 0.5, point_interval = "median_hdci", .width = 0.95, alpha = 0.6) +
+  stat_lineribbon(aes(fill = Depth), colour = "black", size = 0.5, point_interval = "median_hdci", .width = 0.85, alpha = 0.9) +
+  facet_wrap(~Depth, ncol = 1) +
+  #scale_colour_viridis_d(option = "plasma", end = 0.8) +
+  #scale_fill_viridis_d(option = "plasma", end = 0.8) +
+  scale_fill_manual(values = websafe_bluepal) +
+  scale_y_continuous(expand = c(0.1, 0)) +
+  labs(x = "Dist. GBR shelf (km)", 
+       y = "Abundance (No. of predators.150m2)",
+       fill = "Credible interval",
+       title = "") +
+  theme_bjc() +
+  theme(axis.text = element_text(colour = "black", size = 9),
+        axis.title = element_text(colour = "black", size = 10),
+        axis.title.y = element_blank(),
+        axis.text.y = element_blank(),
+        #strip.text = element_text(colour = "black", size = 9),
+        strip.text = element_blank(),
+        legend.position = 'none')
+
+abun_dGBR_trend 
+```
+
+# Or
+```{r fig.height=70/26.5, fig.width=100/25.4}
+  abun_biogeo_model_nodep_final |> 
+  emmeans(~ dGBR | Depth, var = "dGBR",
+           regrid = "response", type = "response",
+           at = dGBR_range) %>% 
+  as_tibble() %>% 
+  ggplot() +
+  geom_ribbon(aes(x = dGBR, ymin = lower.HPD, ymax = upper.HPD, fill = Depth)) +
+  geom_line(aes(x = dGBR, y = prob, group = Depth), colour = "black") +
+  #scale_colour_viridis_d(option = "plasma", end = 0.8) +
+  #scale_fill_viridis_d(option = "plasma", end = 0.8) +
+  scale_fill_manual(values = websafe_bluepal) +
+  #scale_colour_manual(values = c("blue", "dodgerblue4", "dodgerblue")) +
+  scale_y_continuous(limits = c(0,18)) +
+  labs(x = "Dist. GBR shelf (km)", 
+       y = "Abundance (No. of predators.150m2)") +
+  theme_bjc() +
+  theme(axis.text = element_text(colour = "black", size = 9),
+        axis.title = element_text(colour = "black", size = 10),
+        strip.text = element_text(colour = "black", size = 9),
+        legend.position = 'none') +
+  facet_wrap(~Depth, nrow = 1)
+```
+
+
+
+## dCT * Depth
+
+## Extract range
+```{r}
+dCT_range <- predsum %>% 
+  with(list(dCT = seq_range(dCT, n = 100)))
+```
+
+## Plot
+```{r fig.height=80/26.5, fig.width=100/25.4}
+abun_dCT_trend <- 
+  abun_biogeo_model_nodep_final |> 
+  emmeans(~ dCT | Depth, var = "dCT",
+           #regrid = "response",  type = "response",
+          epred = TRUE,
+           at = dCT_range) %>% 
+  gather_emmeans_draws() %>% 
+  as_tibble() %>% 
+  ggplot(aes(x = dCT, y = .value)) +
+  #stat_lineribbon(colour = "black", fill = "#ccccff", size = 0.5, point_interval = "median_hdci", .width = 0.95, alpha = 0.6) +
+  #stat_lineribbon(colour = "black", fill = "#000099", size = 0.5, point_interval = "median_hdci", .width = 0.85, alpha = 0.9) +
+  stat_lineribbon(aes(fill = Depth), colour = "black",  size = 0.5, point_interval = "median_hdci", .width = 0.95, alpha = 0.6) +
+  stat_lineribbon(aes(fill = Depth), colour = "black", size = 0.5, point_interval = "median_hdci", .width = 0.85, alpha = 0.9) +
+  facet_wrap(~Depth, ncol = 1) +
+  scale_fill_manual(values = websafe_bluepal) +
+  scale_y_continuous(expand = c(0.1, 0)) +
+  labs(x = "Dist. Coral Triangle (km)", 
+       y = "Abundance (No. of predators.150m2)",
+       title = "") +
+  theme_bjc() +
+  theme(axis.text = element_text(colour = "black", size = 9),
+        axis.title = element_text(colour = "black", size = 10),
+        #strip.text = element_text(colour = "black", size = 9),
+        strip.text = element_blank(),
+        legend.position = 'none')
+
+abun_dCT_trend
+```
+
+
+
+```{r fig.width=165/25.4, fig.height=90/25.4}
+abun_biogeo_plot <- 
+  cowplot::plot_grid(abun_dCT_trend, abun_dGBR_trend, depth_dense_plot, nrow = 1, labels = c("a", "b", "c"), rel_widths = c(1.1,1,1), label_size = 8, align = "h") +
+  theme(plot.background = element_rect(color = "black"))
+abun_biogeo_plot
+```
+
+
+
+# Save
+```{r}
+ggsave(filename = "output/abun_biogeo_fig.pdf", plot = abun_biogeo_plot, height = 80, width = 160, device = cairo_pdf, units = "mm", dpi = 300)
+```
+
+
+
+
+
+
+
+
+
+
+## JUNK ##
+
+
+
+# dCT * Depth
+```{r fig.height=160/26.5, fig.width=100/25.4}
+biogeo_model |> 
+  emmeans(~ Depth|dCT, at = biogeogrid, type = 'response',  response = "regrid") |> 
+  regrid()  |> 
+  as_tibble() |> 
+  ggplot() +
+  geom_line(aes)
+  geom_pointrange(aes(x = Depth, y = prob, ymin = lower.HPD, ymax = upper.HPD, colour = Depth, fill = Depth), size = 1) +
+  scale_fill_manual(values = c("#006ad1", "#1e90ff", "#6bb6ff")) +
+  scale_colour_manual(values = c("#006ad1", "#1e90ff", "#6bb6ff")) +
+  theme_bjc() +
+  theme(axis.text = element_text(colour = "black", size = 9),
+        axis.title = element_text(colour = "black", size = 10),
+        strip.text = element_text(colour = "black", size = 9),
+        plot.title = element_text(size = 10, hjust = 0.5),
+        legend.position = "none") +
+  facet_wrap(~dCT, nrow = 3, strip.position = "right")
+```
+
