@@ -1,0 +1,306 @@
+---
+title: "Abundance ~ Depth"
+author: "Ben Cresswell"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: 
+ html_document:
+    code_folding: show
+    collapse: no
+    df_print: paged
+    fig_caption: yes
+    fig_height: 6
+    fig_width: 10
+    highlight: textmate
+    theme: spacelab
+    toc: yes
+    toc_float: yes
+editor_options: 
+  chunk_output_type: inline
+---
+
+
+```{r setup, include=FALSE}
+# Set options, housekeeping
+knitr::opts_chunk$set(
+	echo = FALSE,
+	include = TRUE,
+	message = FALSE,
+	warning = FALSE)
+#rm(list=ls()) # Clear out environment if necessary
+```
+
+
+# Introduction
+
+Here we are subsetting just Bougainville, Osprey and Lihou reefs and modelling abundance over depth
+
+
+
+# Load predsum.sub data
+```{r message=FALSE, warning=FALSE, include=FALSE}
+source("code/packages.R")
+#sourceRmd("code/abundance/diw_abund.Rmd")
+load("data/Rdata/predsum.sub.Rdata")
+```
+
+
+
+
+
+
+
+# Subset
+```{r}
+predsum.sub <- predsum |> 
+  filter(Reef_1 %in% c("Lihou", "Osprey", "Bougainville")) %>% 
+  droplevels()
+```
+
+
+# Check
+```{r}
+predsum.sub
+```
+
+
+
+# EDA
+
+```{r}
+predsum.sub |> 
+  ggplot(aes(x = Depth, y = No_Preds)) +
+  geom_boxplot() 
+```
+
+
+Lots of zeros. Will need ZI term in model
+
+
+## Set model formula
+```{r}
+depth_form <- bf(No_Preds ~ Depth + (1|Site), zi ~ 1, family = zero_inflated_negbinomial(link = "log"))
+```
+
+## Check what priors we need to estimate
+```{r}
+get_prior(depth_form, data = predsum.sub)
+```
+
+
+
+
+## Use data properties to help set weakly informative priors
+```{r}
+predsum.sub |> 
+  group_by(Depth) |> 
+  summarise(median = median(No_Preds), MAD = mad(No_Preds), mean = mean(No_Preds), sd = sd(No_Preds), logmedian = log(median(No_Preds)), 
+            logMAD = log(mad(No_Preds)), logmean = log(mean(No_Preds)), logsd = log(sd(No_Preds)))
+```
+
+
+## Set priors
+```{r}
+depth_priors <-  
+  prior(normal(1, 2), class = 'Intercept') +
+  prior(normal(0, 0.5), class = 'b') +
+  prior(gamma(2, 2), class = 'shape') +
+  prior(logistic(0, 1), class = 'Intercept', dpar = "zi")
+```
+
+
+
+## Fit model
+```{r}
+depth_mod1 <- 
+  brm(depth_form,
+  data = predsum.sub,
+  prior = depth_priors,
+  sample_prior = 'only',              
+  chains = 3,
+  cores = 3,
+  iter = 5000, 
+  warmup = 1000, 
+  thin = 4,
+  seed = 123,
+  silent = 0,
+  refresh = 0,
+  backend = "cmdstanr")
+
+```
+
+
+## Check prior width
+```{r fig.width=140/25.4}
+depth_mod1 |> conditional_effects() |> plot(ask = FALSE, points = TRUE)
+```
+
+Looks like they should be wide enough. Will fit the data and do pp checks
+
+
+# Fit model with data
+```{r}
+depth_mod2 <- depth_mod1 |> update(sample_prior = "yes", cores = 3, refresh = 0)
+```
+
+
+# Check influence of priors
+```{r}
+depth_mod2 |> SUYR_prior_and_posterior()
+```
+
+
+# Model validation
+
+## DHARMa residuals
+```{r}
+resids <- make_brms_dharma_res(depth_mod2, integerResponse = FALSE)
+testUniformity(resids)
+plotResiduals(resids, form = factor(rep(1, nrow(predsum.sub))))
+plotResiduals(resids, quantreg = TRUE)
+testDispersion(resids) # Dispersion plot (dispersion = variance/mean) - we assume mean and variance are the same, so we need to check
+```
+
+
+## Chain checks
+
+```{r}
+# Trace plot
+mcmc_plot(depth_mod2, type='trace')
+stan_trace(depth_mod2$fit)
+# Autocorrelation
+mcmc_plot(depth_mod2, type='acf_bar')
+stan_ac(depth_mod2$fit)
+# Rhat - how well the chains converged
+mcmc_plot(depth_mod2, type='rhat_hist')
+# Percentage effectives - needs to be greater than 0.5
+mcmc_plot(depth_mod2, type='neff_hist')
+
+# Others
+mcmc_plot(depth_mod2, type='dens_overlay')
+mcmc_plot(depth_mod2, type='nuts_acceptance')
+mcmc_plot(depth_mod2, type='nuts_energy')
+```
+
+
+
+## PP checks
+```{r}
+# Link scale
+pp_check(depth_mod2, ndraws = 250)
+
+# Transformed
+pred <- posterior_predict(depth_mod2)
+bayesplot::ppc_dens_overlay(y = log1p(predsum.sub$No_Preds), 
+                            yrep = log1p(pred[1:100,]))
+```
+y = the observed data
+yrep = the predictive(posterior) distribution
+These follow approximate trends, so we'll go with it for now.
+
+
+## From this model we should be able to work out the expected proportion of observations (transects) that would contain no predatory fishes
+
+
+# Check R2
+```{r}
+depth_mod2 |> performance::r2_posterior() |> as.data.frame() |>
+  median_hdci()
+```
+
+
+# Final model
+```{r}
+depth_mod_final <- depth_mod2
+#save(depth_mod_final, file = "data/Rdata/depth_mod_final.Rdata")
+```
+
+
+
+
+
+# Model investigation 
+## Conditional effects plot again to aid interpretation
+```{r}
+depth_mod2 |> conditional_effects() |> plot(ask = FALSE, points = FALSE) # Without raw data
+#depth_mod2 |> conditional_effects() |> plot(ask = FALSE, points = TRUE) # With raw data overplotted
+```
+
+
+## Summary table
+```{r}
+depth_mod2 |> 
+  as_draws_df() |>    # Extract draws
+  exp() |>            # Back transform
+  summarise_draws(median,
+                  HDInterval::hdi,
+                  rhat, ess_bulk, ess_tail,
+                  Pl = ~mean(.x <1),                       # Exceedence prob - on exp scale it's sig if doesn't cross 1
+                  Pg = ~mean(.x >1))|> 
+  as_tibble() |> 
+  mutate(median = round(median, 3),
+         lower = round(lower, 3),
+         upper = round(upper, 3))
+```
+
+
+# Simple contrasts:
+```{r}
+depth_mod2 |> 
+  emmeans(~Depth, type = "response")
+
+depth_mod2 |> 
+  emmeans(~Depth, regrid = TRUE)
+
+depth_mod2 |> 
+  emmeans(~Depth, type = "link") |> 
+  regrid()
+```
+
+
+# Exceedence probablities
+```{r}
+depth_mod2 |> 
+  emmeans(~Depth, type = "link") |> 
+  regrid() |> 
+  pairs()
+```
+
+
+
+
+
+```{r}
+depth_mod2 |> 
+  emmeans(~Depth, type = "link")  |> 
+  gather_emmeans_draws() |> 
+  ggplot(aes(x = Depth, y = .value)) +
+ # geom_point(data = predsum %>% filter(No_Preds != 0), aes(x = Reef_1_Area, y = No_Preds), fill = "#66cc99", colour = "#336633", pch = 21, alpha = 0.3, position = position_jitter()) +
+  geom_pointrange(colour = "black", fill = "#ffa494", size = 0.5, point_interval = "median_hdci", .width = 0.95, alpha = 0.6) +
+  stat_lineribbon(colour = "black", fill = "#fa2600", size = 0.5, point_interval = "median_hdci", .width = 0.85, alpha = 0.9) +
+  #scale_colour_viridis_d(option = "plasma", end = 0.8) +
+#  scale_fill_manual(values = websafe_pinkpal) +
+#  scale_fill_viridis_d(option = "plasma", end = 0.8) +
+  #scale_y_continuous(limits = c(0,15), breaks = c(2,4,6,8,10,12)) +
+  labs(x = "Reef area (kha)", 
+       y = "No. preds (n.150m2)") +
+  theme_minimal() +
+  theme(axis.text = element_text(colour = "black", size = 9),
+        axis.title = element_text(colour = "black", size = 10),
+        strip.text = element_text(colour = "black", size = 9),
+        plot.title = element_text(size = 10, hjust = 0.5),
+        legend.position = "none")
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
