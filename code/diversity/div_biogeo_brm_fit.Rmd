@@ -1,0 +1,297 @@
+---
+title: "Diversity modelling - biogeographic drivers"
+author: "Ben Cresswell"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: 
+ html_document:
+    code_folding: show
+    collapse: no
+    df_print: paged
+    fig_caption: yes
+    fig_height: 6
+    fig_width: 10
+    highlight: textmate
+    theme: spacelab
+    toc: yes
+    toc_float: yes
+editor_options: 
+  chunk_output_type: inline
+---
+
+
+```{r setup, include=FALSE}
+# Set options, housekeeping
+knitr::opts_chunk$set(
+	echo = FALSE,
+	include = TRUE,
+	message = FALSE,
+	warning = FALSE)
+#rm(list=ls()) # Clear out environment if necessary
+```
+
+```{r}
+source('code/packages.R')
+source('code/helper_functions.R')
+```
+
+
+# We'll start with the aysymptotic species richness estimates from iNEXT.
+```{r}
+load(file = "data/Rdata/species_rich_asymp.Rdata")
+```
+
+```{r}
+glimpse(species_rich_asymp)
+```
+
+
+As with the abundance modelling, we are going to examine the effect of the following biogeographic variables:
+
+------------         ------------------------------------------------------------------------------
+## DEPTH ##
+**Depth**             3 level categorical variable - depth bins by photic zone. NOTE: This factor has now ALSO been recoded as **'Depth'**
+
+## BIOGEOGRAPHIC ##
+**Site_lat**          Continuous variable - distance from equator in ° latitude - not very useful. Could instead use:
+**dCT**               Continuous variable - distance from Coral Triangle in km. More usable.
+**Site_long**         Continuous variable - distance from UTC in ° long - also not very useful. Could instead use:
+**dGBR**              Continuous variable - distance from GBR shelf in km. More usable.
+**Region**            4 factor categorical variable - Coral Sea region, Far North, North, Central, South. Could be used instead of any of the above
+
+-------------     ------------------------------------------------------------------------------
+
+# Set model formula
+Response variable is SpecRich
+```{r}
+div_biogeo_form <- bf(SpecRich ~ Depth*scale(dCT) + Depth*scale(dGBR) + (1|Site),  family = gaussian(link = "log"))
+```
+
+# What priors do we need?
+```{r}
+get_prior(div_biogeo_form, data = species_rich_asymp)
+```
+
+# What is the range of our data?
+```{r}
+species_rich_asymp |> 
+  mutate(log_SR = log(SpecRich)) |> 
+  group_by(Depth) |> 
+  summarise(median = median(SpecRich), MAD = mad(SpecRich), 
+            log_median = median(log_SR), log_MAD = mad(log_SR))
+```
+
+
+# Weakly informative priors
+Need to go a little wider than for the isolation models
+```{r}
+div_biogeo_priors <- 
+  prior(normal(3, 0.9), class = 'Intercept') +      
+  prior(normal(0, 0.6), class = 'b') +
+  prior(student_t(3, 0, 2.5) , class = 'sigma') 
+ # prior(cauchy(0, 2), class = 'shape')
+```
+
+
+# Fit model
+```{r}
+div_biogeo_prioronlymod<- brm(formula = div_biogeo_form, 
+            data = species_rich_asymp,
+            prior = div_biogeo_priors,
+            sample_prior = 'only',             
+            chains = 3,
+            cores = 3,             
+            iter = 5000,
+            warmup = 1000,         
+            thin = 4,
+            silent = 0,            
+            refresh = 0, 
+            backend = "cmdstanr")
+```
+
+
+
+## Check
+```{r}
+div_biogeo_prioronlymod |> conditional_effects() |> plot(points = TRUE, ask = FALSE)
+```
+
+
+
+# Priors look good - include data
+```{r}
+div_biogeo_mod <- div_biogeo_prioronlymod |> update(sample_prior = 'yes', refresh = 0)
+```
+
+
+# CHeck prior - posterior influence
+```{r}
+div_biogeo_mod |> SUYR_prior_and_posterior()
+```
+
+
+Looking good
+
+
+# Chain diagnostics
+
+## Trace plots
+```{r traceplot}
+div_biogeo_mod$fit |>  stan_trace()
+```
+## Autocorrelation
+```{r}
+div_biogeo_mod$fit |> stan_ac() 
+```
+## rhat
+```{r}
+div_biogeo_mod$fit |> stan_rhat() 
+```
+## Effectiveness of sampling
+```{r}
+div_biogeo_mod$fit |> stan_ess()
+```
+
+
+# Residuals
+```{r}
+resids <- make_brms_dharma_res(div_biogeo_mod, integerResponse = FALSE)
+testUniformity(resids)
+plotResiduals(resids, form = factor(rep(1, nrow(species_rich_asymp))))
+plotResiduals(resids, quantreg = FALSE)
+testDispersion(resids) # Dispersion plot (dispersion = variance/mean) - we assume mean and variance are the same, so we need to check
+```
+
+
+# Residuals look ok
+
+## PP checks
+```{r}
+pp_check(div_biogeo_mod, ndraws = 250)
+```
+
+# Model looks good.
+However, we also have the option of using a Gamma distribution
+
+# Set model formula
+Response variable is SpecRich
+```{r}
+div_biogeo_form2 <- bf(SpecRich ~ Depth*scale(dCT) + Depth*scale(dGBR) + (1|Site),  family = Gamma(link = "log"))
+```
+
+# What priors do we need?
+```{r}
+get_prior(div_biogeo_form2, data = species_rich_asymp)
+```
+
+# Similar priors but now with one for shape
+```{r}
+div_biogeo_priors2 <- 
+  prior(normal(3, 0.8), class = 'Intercept') +      # Talking to ML - can pull 2.5 in a bit
+  prior(normal(0, 0.6), class = 'b') +
+  prior(cauchy(0, 2), class = 'shape')
+```
+
+
+# Fit model
+```{r}
+div_biogeo_prioronlymod2<- brm(formula = div_biogeo_form2, 
+            data = species_rich_asymp,
+            prior = div_biogeo_priors2,
+            sample_prior = 'only',             
+            chains = 3,
+            cores = 3,             
+            iter = 5000,
+            warmup = 1000,         
+            thin = 4,
+            silent = 0,            
+            refresh = 0, 
+            backend = "cmdstanr")
+```
+
+
+## Check
+```{r}
+div_biogeo_prioronlymod2 |> conditional_effects() |> plot(points = TRUE, ask = FALSE)
+```
+
+
+# Priors look good - include data
+```{r}
+div_biogeo_mod2 <- div_biogeo_prioronlymod2 |> update(sample_prior = 'yes', refresh = 0)
+```
+
+
+
+# CHeck prior - posterior influence
+```{r}
+div_biogeo_mod2 |> SUYR_prior_and_posterior()
+```
+
+
+# Chain diagnostics
+
+## Trace plots
+```{r traceplot}
+div_biogeo_mod2$fit |>  stan_trace()
+```
+## Autocorrelation
+```{r}
+div_biogeo_mod2$fit |> stan_ac() 
+```
+## rhat
+```{r}
+div_biogeo_mod2$fit |> stan_rhat() 
+```
+## Effectiveness of sampling
+```{r}
+div_biogeo_mod2$fit |> stan_ess()
+```
+
+
+# Residuals
+```{r}
+resids <- make_brms_dharma_res(div_biogeo_mod2, integerResponse = FALSE)
+testUniformity(resids)
+plotResiduals(resids, form = factor(rep(1, nrow(species_rich_asymp))))
+plotResiduals(resids, quantreg = FALSE)
+testDispersion(resids) # Dispersion plot (dispersion = variance/mean) - we assume mean and variance are the same, so we need to check
+```
+
+
+
+# Residuals look ok
+
+## PP checks
+```{r}
+# Exponential
+pp_check(div_biogeo_mod2, ndraws = 250)
+
+# Logged
+pred <- posterior_predict(div_biogeo_mod2)
+bayesplot::ppc_dens_overlay(y = log1p(species_rich_asymp$SpecRich), 
+                            yrep = log1p(pred[1:100,]))
+```
+
+
+
+# Compare models
+
+```{r}
+loo_compare(brms::loo(div_biogeo_mod),  # The log normal model
+            brms::loo(div_biogeo_mod2)) # The gamma model
+```
+
+We'll take model 2 forward for further investigation
+
+# Check R2
+```{r}
+bayes_R2(div_biogeo_mod)
+bayes_R2(div_biogeo_mod2)
+```
+
+
+# Final model
+```{r}
+div_biogeo_mod_final <- div_biogeo_mod
+#save(div_biogeo_mod_final, file = "data/Rdata/div_biogeo_model_final.Rdata")
+```
