@@ -1,0 +1,323 @@
+---
+title: "Diversity modelling - Isolation"
+author: "Ben Cresswell"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: 
+ html_document:
+    code_folding: show
+    collapse: no
+    df_print: paged
+    fig_caption: yes
+    fig_height: 6
+    fig_width: 10
+    highlight: textmate
+    theme: spacelab
+    toc: yes
+    toc_float: yes
+    css: kable.css
+editor_options: 
+  chunk_output_type: inline  
+---
+
+
+```{r setup, include=FALSE}
+# Set options, housekeeping
+knitr::opts_chunk$set(
+	echo = FALSE,
+	include = TRUE,
+	message = FALSE,
+	warning = FALSE)
+#rm(list=ls()) # Clear out environment if necessary
+```
+
+
+# Packages and other functions
+```{r}
+source('code/packages.R')
+source('code/extras.R')
+source('code/helper_functions.R')
+```
+
+
+# Load model and data
+```{r}
+load(file = "data/Rdata/species_rich_asymp.Rdata")
+load("data/Rdata/div_biogeo_model_final.Rdata")
+```
+
+# Model investigation
+```{r}
+div_biogeo_mod_final |> conditional_effects() |> plot(points = TRUE, ask = FALSE)
+```
+
+
+## Summary table
+```{r}
+div_biogeo_mod_final |> 
+  gather_draws(`^b_.*`, regex=TRUE) |> 
+  #filter(.variable != 'b_Intercept') |> 
+  mutate(Value = exp(.value), .keep = "unused")  |> 
+  group_by(.variable) |> 
+  summarise(median_hdci(Value),
+            Pl = mean(Value < 1),
+            Pg = mean(Value > 1))
+```
+
+## Alternative
+```{r}
+div_biogeo_mod_final |> 
+  as_draws_df() |>    # Extract draws
+  #select(1:4)  |> 
+  exp() |>            # Back transform
+  summarise_draws(median,
+                  HDInterval::hdi,
+                  Pl = ~mean(.x <1),                       # Exceedence prob - on exp scale it's sig if doesn't cross 1
+                  Pg = ~mean(.x >1)) |> 
+  as_tibble()  |> 
+  mutate(across(where(is.numeric), round, 4))
+```
+
+# Summary
+
+- At the average depth, dCT and dGBR (the intercept) the median number of predatory fish species is 14 per transect 95% HDI [9-19]
+
+# Interaction - dGBR * Depth
+No effect of distance from GBR on species richness at any depth
+
+# Interaction - dCT * Depth
+In the shallows, species richness increased with distance from the Coral Triangle, although this was highly variable
+
+
+
+
+
+# Effect distributions
+
+# Distribution of dCT effect
+```{r fig.width = 70/25.4, fig.height=60/25.4}
+div_biogeo_mod_final |> 
+  gather_draws(b_scaledCT) |> # Option 1 for filtering out the draws you want
+  #gather_draws(`^b_.*`, regex=TRUE) |>                 # Option 2 
+  #filter(.variable != 'b_Intercept') |>
+  #filter(.variable != 'b_zi_Intercept') |> 
+ # filter(.variable != 'b_scaleReef_1_Area:scaleReef_100') |> 
+  ggplot() + 
+  stat_halfeye(aes(x=exp(.value),  y=.variable, fill = .variable), .width = c(0.8, 0.95), point_interval = "median_hdi", alpha = 0.8) +
+  #ggridges::geom_density_ridges_gradient(aes(x=exp(.value),  y=.variable, fill = stat(x)), alpha = 0.4, colour = "black", quantile_lines = TRUE, quantiles = c(0.025, 0.5, 0.975)) +
+  geom_vline(xintercept = 1, linetype = 'dashed') +
+  scale_fill_manual("Effect", values = c("#fa2600")) +
+  scale_y_discrete(position = "right", labels = c("Reef\nsize", "Reef\nisol"), expand = c(0.01, 0.01)) +
+  scale_x_continuous("Effect distribution", trans = scales::log2_trans(), expand = c(0.15,0.1)) +
+  theme_minimal() +
+  theme(axis.title.y.right = element_blank(),
+        axis.text = element_text(colour = "black", size = 9),
+        axis.title = element_text(colour = "black", size = 10),
+        strip.text = element_text(colour = "black", size = 9),
+        plot.title = element_text(size = 10, hjust = 0.5),
+        axis.text.y.right = element_blank(),
+        legend.position = "none")
+```
+
+
+
+# Distribution of dGBR effect
+```{r fig.width = 70/25.4, fig.height=60/25.4}
+div_biogeo_mod_final |> 
+  gather_draws(b_scaledGBR) |> # Option 1 for filtering out the draws you want
+  ggplot() + 
+  stat_halfeye(aes(x=exp(.value),  y=.variable, fill = .variable), .width = c(0.8, 0.95), point_interval = "median_hdi", alpha = 0.8) +
+  #ggridges::geom_density_ridges_gradient(aes(x=exp(.value),  y=.variable, fill = stat(x)), alpha = 0.4, colour = "black", quantile_lines = TRUE, quantiles = c(0.025, 0.5, 0.975)) +
+  geom_vline(xintercept = 1, linetype = 'dashed') +
+  scale_fill_manual("Effect", values = c("#006ad1")) +
+  scale_y_discrete(position = "right", labels = c("Reef 100km"), expand = c(0.05,0)) +
+  scale_x_continuous("Effect distribution", trans = scales::log2_trans()) +
+  theme_minimal() +
+  theme(axis.title.y.right = element_blank(),
+        axis.text = element_text(colour = "black", size = 9),
+        axis.title = element_text(colour = "black", size = 10),
+        strip.text = element_text(colour = "black", size = 9),
+        plot.title = element_text(size = 10, hjust = 0.5),
+        axis.text.y.right = element_blank(),
+        legend.position = "none")
+```
+
+
+
+## Extract range
+```{r}
+dCT_range <- species_rich_asymp %>% 
+  with(list(dCT = seq_range(dCT, n = 100)))
+```
+
+
+## Plot
+```{r fig.height=170/26.5, fig.width=70/25.4}
+div_dCTdepth_trend <- 
+  div_biogeo_mod_final |> 
+  emmeans(~ dCT | Depth, var = "dCT",
+           #regrid = "response",  type = "response",
+          epred = TRUE,
+           at = dCT_range) %>% 
+  gather_emmeans_draws() %>% 
+  as_tibble() %>% 
+  ggplot(aes(x = dCT, y = .value)) +
+  #stat_lineribbon(colour = "black", fill = "#ccccff", size = 0.5, point_interval = "median_hdci", .width = 0.95, alpha = 0.6) +
+  #stat_lineribbon(colour = "black", fill = "#000099", size = 0.5, point_interval = "median_hdci", .width = 0.85, alpha = 0.9) +
+  stat_lineribbon(aes(fill = Depth), colour = "black",  size = 0.5, point_interval = "median_hdci", .width = 0.95, alpha = 0.6) +
+  stat_lineribbon(aes(fill = Depth), colour = "black", size = 0.5, point_interval = "median_hdci", .width = 0.85, alpha = 0.9) +
+  facet_wrap(~Depth, ncol = 1, scales = "free") +
+  scale_fill_manual(values = websafe_bluepal) +
+  scale_y_continuous(expand = c(0.1, 0)) +
+  labs(x = "Dist. Coral Triangle (km)", 
+       y = "Speceies richness (.site)",
+       title = "") +
+  theme_minimal() +
+  theme(axis.text = element_text(colour = "black", size = 9),
+        axis.title = element_text(colour = "black", size = 10),
+        #strip.text = element_text(colour = "black", size = 9),
+        strip.text = element_blank(),
+        legend.position = 'none')
+
+div_dCTdepth_trend
+```
+
+
+# Save
+```{r}
+ggsave(filename = "output/div_dCTdepth_fig.pdf", plot = div_dCTdepth_trend, height = 160, width = 70, device = cairo_pdf, units = "mm", dpi = 300)
+```
+
+
+
+
+## Extra stuff/junk ##
+
+# Plot
+
+```{r}
+species_rich_asymp  %>% 
+  select(Reef_1, dCT) %>% 
+  distinct() %>% 
+  summarise(median = median(dCT), Q1 = quantile(dCT, probs = 0.25), Q4 = quantile(dCT, probs = 0.95),
+            CI_05 = quantile(dCT, probs = 0.05), CI_95 = quantile(dCT, probs = 0.99),
+            mean = mean(dCT))
+```
+
+
+# Make new data grid
+```{r}
+biogeogrid <- species_rich_asymp |> 
+  with(list(Depth = levels(Depth),
+            dCT = c(50, 600, 1000)))
+```
+
+
+# dCT * Depth
+```{r fig.height=120/26.5, fig.width=100/25.4}
+div_biogeo_mod_final |> 
+  emmeans(~ Depth|dCT, at = biogeogrid, type = 'response') |> 
+  as_tibble() |> 
+  ggplot(aes(x = Depth, y = response)) +
+  geom_line(aes(group = 1)) +
+  geom_pointrange(aes(ymin = lower.HPD, ymax = upper.HPD, fill = Depth), colour = "black", pch = 21, size = 1) +
+  scale_fill_manual(values = c("#006ad1", "#1e90ff", "#6bb6ff")) +
+  #scale_colour_manual(values = c("#006ad1", "#1e90ff", "#6bb6ff")) +
+  theme_minimal() +
+  theme(axis.text = element_text(colour = "black", size = 9),
+        axis.title = element_text(colour = "black", size = 10),
+        strip.text = element_text(colour = "black", size = 9),
+        plot.title = element_text(size = 10, hjust = 0.5),
+        legend.position = "none") +
+  facet_wrap(~dCT, nrow = 3, strip.position = "right")
+```
+
+
+
+
+## Plot the trends
+
+# emmeans for plot data
+
+```{r}
+newdata <- with(species_rich_asymp,
+                list(Reef_1_Area = seq(from = min(Reef_1_Area), to = max(Reef_1_Area), len = 20),
+                     Reef_100 = seq(from = min(Reef_100), to = max(Reef_100), len = 20)))
+
+```
+
+# Reef area trend
+```{r fig.width = 100/25.4, fig.height=60/25.4}
+reefarea_trend <- 
+  div_biogeo_mod_final |> 
+  emmeans(~Reef_1_Area, type = "response",
+          at = newdata)  |> 
+  as_tibble() |> 
+  ggplot() +
+  geom_ribbon(aes(x = Reef_1_Area, ymin = lower.HPD, ymax = upper.HPD), fill = "#fa2600", alpha = 0.8) +
+  geom_line(aes(x = Reef_1_Area, y = response)) +
+  labs(x = "Reef size (kha)", y = "Species richness (.250m2)") +
+  scale_y_continuous() +
+  theme_minimal() +
+  theme(axis.text = element_text(colour = "black", size = 9),
+        axis.title = element_text(colour = "black", size = 10),
+        strip.text = element_text(colour = "black", size = 9),
+        plot.title = element_text(size = 10, hjust = 0.5),
+        legend.position = "none") 
+reefarea_trend
+```
+
+
+# Reef 100km trend
+```{r fig.width = 100/25.4, fig.height=60/25.4}
+reef100_trend <- 
+div_biogeo_mod_final |> 
+  emmeans(~Reef_100, type = "response",
+          at = newdata)  |> 
+  as_tibble() |> 
+  ggplot() +
+  geom_ribbon(aes(x = Reef_100, ymin = lower.HPD, ymax = upper.HPD), fill = "#006ad1", alpha = 0.8) +
+  geom_line(aes(x = Reef_100, y = response)) +
+  labs(x = "Reef w/in 100km (kha)", y = "Species richness (.250m2)") +
+  scale_y_continuous() +
+  theme_minimal() +
+  theme(axis.text = element_text(colour = "black", size = 9),
+        axis.title = element_text(colour = "black", size = 10),
+        strip.text = element_text(colour = "black", size = 9),
+        plot.title = element_text(size = 10, hjust = 0.5),
+        legend.position = "none") 
+reef100_trend
+```
+
+
+# Combine
+```{r fig.width = 170/25.4, fig.height=60/25.4}
+reefarea_plot <- 
+  cowplot::plot_grid(reefarea_trend, reefarea_effect, rel_widths = c(1, 0.7))
+reefarea_plot
+```
+
+
+
+```{r fig.width = 170/25.4, fig.height=60/25.4}
+reef100_plot <- 
+  cowplot::plot_grid(reef100_trend, reef100_effect, rel_widths = c(1, 0.7))
+reef100_plot
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
