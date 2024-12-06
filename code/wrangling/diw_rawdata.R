@@ -53,11 +53,13 @@ insiders %>% select(T_ID) %>% distinct()            # 125
 538 + 125 # = 663. Missing 37. Find out what these are:
 
 # Diffs between rmeta raw and rmeta:
-non_meta <- anti_join(rmetadata_raw, rmetadata)                 # 162
+non_meta <- anti_join(rmetadata_raw, rmetadata) |> as_tibble()  # 162
 non_fish <- insiders %>% select(T_ID) %>% distinct()            # 125
-check <- anti_join(non_meta, non_fish)                          # This contans our missing transects = they are all lagoon/inside reef and probably just not video processed yet. Either way, we don't need them.
+check <- anti_join(non_meta, non_fish)                          
 
-
+# This contans our missing transects = they are all lagoon/inside reef and we don't need them:
+check |> filter(Situation == "inner")
+  
 
 #save(fish, file = "data/Rdata/fish.Rdata")    
 
@@ -103,8 +105,9 @@ preds %>% select(T_ID) %>%  distinct()
 
 # Should have no NAs in the Number var
 preds %$% summary(Number)
+preds |>  filter(is.na(Number))
 
-# Check what is excluded (13992 observations)
+# Check what is excluded (13116 observations)
 nonpreds <- fish %>% 
   anti_join(preds) %>% 
   droplevels()
@@ -149,6 +152,12 @@ nonpreds_check2 <- fish_check %>%
 preds %$% 
   summary(Trophic.Level) 
 
+# Some NAs - check
+trophic_NAs <- preds |> 
+  filter(is.na(Trophic.Level))
+
+# Not sure how these have crept in but they are all solid predator taxa
+
 ## Check spp under 3.5
 preds %>% 
   filter(Trophic.Level < 3.5) %>% 
@@ -171,12 +180,14 @@ predtaxa <- preds %>% group_by(Binomial) %>% summarise() # 106 taxa total
 ## No of site~depth combinations
 preds %>% group_by(Site_Depth) %>% summarise() # 71 combinations total. Should have 31*3 = 93 but some combinations are missing
 
-preds %>% group_by(Site) %>% summarise() # 31 sites over 13 reefs
+preds %>% group_by(Site) %>% summarise() # 31 sites..
 
-preds %>% group_by(T_ID) %>% summarise() # 31 sites over 13 reefs
+preds %>% group_by(Reef_1) %>% summarise() # ..over 13 reefs
+
+preds %>% group_by(T_ID) %>% summarise() # 538 transects
 
 
-# Save once happy, and if required
+# Save if required
 #save(preds, file = "data/Rdata/preds.Rdata")    
 #load("data/Rdata/preds.Rdata")    
 
