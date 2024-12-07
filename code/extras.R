@@ -1,17 +1,28 @@
 # Aesthetics
 
-#websafe_bluepal <- c("#ccccff", "#6666ff", "#000099")
-#bluepal3        <- c("#006ad1", "#1e90ff", "#6bb6ff")
-#websafe_pinkpal <- c("#660066" ,"#ff66ff", "#ffc4ff")
-#websafe_greenpal <- c("#003333", "#336633", "#66cc99")
+# Suggested palette for more than 8 cats together:
 
-#websafe_greenpal2 <- c("#00cc00", "#006600", "#66cc99")
-
-#websafe_redpal <- c("#ffb6a9", "#ff6347", "#e42300")
+#safe_colorblind_palette <- c("#88CCEE", "#CC6677", "#DDCC77", "#117733", "#332288", "#AA4499", 
+                 #           "#44AA99", "#999933", "#882255", "#661100", "#6699CC", "#888888")
+#scales::show_col(safe_colorblind_palette)
 
 
-#depth_palette = c("#000099", "#0d0887" )
+  
 
+cb_palette <- c(#"#88CCEE",
+                             #"#CC6677", 
+                             #"#DDCC77",
+                             #"#117733", 
+                             "#332288", 
+                             "#AA4499", 
+                             "#44AA99", 
+                             "#999933" 
+                             #"#882255", 
+                             #"#661100", 
+                             #"#6699CC", 
+                             #"#888888",
+                             
+)
 
 theme_bjc <- function (base_size = 11, base_family = "Arial") {
   theme_minimal() %+replace% 
