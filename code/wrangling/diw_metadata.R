@@ -24,16 +24,28 @@ reef_biogeo %$% summary(Reef_1_Area)
 # Will split into lower, middle and upper quartiles below
 
 
-# Trim down to only transects on the outside of reefs and add other variables as required - leaves us with 496 transects
+lats <- rmetadata_raw |> 
+  select(Reef_1, Site, Site_lat) |> 
+  distinct() |> 
+  arrange(desc(Site_lat))
+
+
+# Trim down to only transects on the outside of reefs and add other variables as required - leaves us with 538 transects
 rmetadata <- rmetadata_raw  |> 
   #filter(Habitat != "lagoon")  |>   # Get rid of lagoon transects early
-  filter(Situation != "inner")  |>   # Get rid of any transect not on an outside reef
+  filter(Situation != "inner")  |>   # or can remove any transect not on an outside reef
   droplevels()  |> 
   mutate(T_ID = paste(Survey, Site, Survey_Day, Dive_No, Transect, sep = "-")) |>   # T_ID variable for wrangling
-  left_join(reef_biogeo) %>%  # Combine with biogeographic metadata
+  mutate(Depth = factor(case_when(Depth_m < 31 ~ 'Shallow',
+                                                Depth_m >= 31  & Depth_m < 61 ~ 'Upper', 
+                                                Depth_m >= 61   ~ 'Lower'))) |> 
+  mutate(Depth = fct_relevel(Depth, c("Shallow", "Upper")))  |>
+  mutate(Site_Depth = factor(paste(Site, Depth, sep = "_")))  |>  
+  left_join(reef_biogeo) |>   # Combine with biogeographic metadata
   mutate_if(is.character, as.factor) |>             # Fix ch vars
-  mutate(Region = fct_relevel(Region, "Far_North", "North"))  |> 
-  # Might need to include protection level in models:
+  mutate(Region = fct_relevel(Region, "Far_North", "North"))  |>  # Set Region to appear as N-S in figures
+  mutate(Reef_1 = fct_reorder(Reef_1, desc(Site_lat))) |>  # Set Reef_1 to appear N-S in figures 
+    # Might need to include protection level in models:
   mutate(Zone = factor(                # Ideally want to get this all into the metadata
     case_when(
       Reef_1 == "Bougainville" & Site_long < 147.108883 & Site_lat > -15.495 | 
@@ -51,25 +63,18 @@ rmetadata <- rmetadata_raw  |>
         Reef_1 == "Wreck" 
       ~ "HPZ", .default = "NTMR"))) 
 
-rmetadata %>% str()
-rmetadata %$% summary(Aspect_descriptive)
-rmetadata %$% summary(Reef_1)                            
-rmetadata %$% summary(Habitat)                           
-rmetadata %$% summary(Depth_bin)
-rmetadata %$% summary(Depth_bin_meso)
-rmetadata %$% summary(Isol)
+# rmetadata %>% str()
+# rmetadata %$% summary(Aspect_descriptive)
+# rmetadata %$% summary(Reef_1)                            
+# rmetadata %$% summary(Habitat)                           
+# 
+# 
+# #glimpse(rmetadata)
+# #summary(rmetadata)
+# rmetadata %$% str(T_ID)
+# rmetadata %$% summary(Aspect_descriptive)
 
-rmetadata %>% 
-  select(Reef_1, Isol, IsolRank) %>% 
-  distinct() %>% 
-  arrange(Isol)
-
-#glimpse(rmetadata)
-#summary(rmetadata)
-rmetadata %$% str(T_ID)
-rmetadata %$% summary(Aspect_descriptive)
-
-#modsave(rmetadata, file = "data/Rdata/rmetadata.Rdata")    
+#save(rmetadata, file = "data/Rdata/rmetadata.Rdata")    
 #load("data/Rdata/rmetadata.Rdata")    
 
 
