@@ -1,0 +1,304 @@
+---
+title: "Modelling predator species richness against biogeographic parameters"
+author: "Ben Cresswell"
+date: today
+date-format: "DD/MM/YYYY"
+---
+
+
+```{r}
+# Preliminaries
+#| label: setup
+#| include: false
+knitr::opts_chunk$set(cache.lazy = FALSE,
+                      tidy = "styler")
+options(tinytex.engine = "xelatex")
+```
+
+
+```{r}
+#rm(list=ls())
+source("code/packages.R")
+source("code/extras.R")
+source("code/helper_functions.R")
+load(file = "data/Rdata/sp_rich_asymp.Rdata")
+```
+
+
+```{r}
+glimpse(sp_rich_asymp)
+```
+
+
+
+## North-South variables
+**Site_lat**          cont var - distance from equator in ° latitude
+**dCT**               cont var - distance from center of Coral Triangle in km
+**Region**            4 factor cat var - Far North, North, Central, South. Could be used if cont vars don't work
+
+## East-West variables
+**Site_long**         cont var - distance from UTC in ° long
+**dGBR**              cont var - distance from GBR shelf in km. More usable.
+
+## Habitat patch isolation variables
+**Reef_1_Area**       cont var - size of reef in kHa
+**Reef_Size**         categorical version of Reef_1_Area, split into 3 levels
+**Reef_100**          cont var - amount of reef area within 100km in kHa
+
+
+
+
+# Set model formula
+Response variable is SpecRich
+```{r}
+sr_biogeo_form <- bf(SpecRich ~ scale(dCT) + scale(dGBR) + scale(Reef_100) + scale(Reef_1_Area) + (1|Site),  family = gaussian(link = "log"))
+```
+
+
+# What priors do we need?
+```{r}
+get_prior(sr_biogeo_form, data = species_rich_asymp)
+```
+
+
+# Weakly informative priors
+Need to go a little wider than for the isolation models
+```{r}
+sr_biogeo_priors <- 
+  prior(normal(2.7, 1), class = 'Intercept') +      
+  prior(normal(0, 0.5), class = 'b') +
+  prior(student_t(3, 0, 2.5) , class = 'sigma') 
+ # prior(cauchy(0, 2), class = 'shape')
+
+sr_biogeo_priors2 <- 
+prior(normal(3.5, 0.75), class = 'Intercept') +     
+  prior(normal(0, 0.2), class = 'b') +
+  prior(student_t(3, 0, 0.75) , class = 'sigma') 
+
+sr_biogeo_priors3 <- 
+prior(student_t(3, 2.4, 1), class = 'Intercept') +     
+  prior(normal(0, 0.2), class = 'b') +
+  prior( student_t(3, 0, 1) , class = 'sigma') 
+
+```
+
+
+# Fit model
+```{r}
+sr_mod_prioronly<- brm(formula = sr_biogeo_form, 
+            data = sp_rich_asymp,
+            prior = sr_biogeo_priors3,
+            sample_prior = 'only',             
+            chains = 3,
+            cores = 3,             
+            iter = 5000,
+            warmup = 1000,         
+            thin = 4,
+            seed = 1234,
+            silent = 0,            
+            refresh = 0, 
+            backend = "cmdstanr")
+```
+
+
+
+## Check
+```{r}
+sr_mod_prioronly |> conditional_effects() |> plot(points = TRUE, ask = FALSE)
+```
+
+
+
+# Priors look good - include data
+```{r}
+sr_biogeo_mod <- sr_mod_prioronly |> update(sample_prior = 'yes', seed = 1234, control = list(adapt_delta = 0.99, max_treedepth = 20), refresh = 0)
+```
+
+
+
+# CHeck prior - posterior influence
+```{r}
+sr_biogeo_mod |> SUYR_prior_and_posterior()
+```
+
+
+# Chain diagnostics
+
+
+```{r chain-checks}
+## Trace plots
+sr_biogeo_mod$fit |>  stan_trace()
+## Autocorrelation
+sr_biogeo_mod$fit |> stan_ac() 
+## rhat
+sr_biogeo_mod$fit |> stan_rhat() 
+## sampling
+sr_biogeo_mod$fit |> stan_ess()
+```
+
+# Residuals
+```{r}
+resids <- make_brms_dharma_res(sr_biogeo_mod, integerResponse = FALSE)
+testUniformity(resids)
+plotResiduals(resids, form = factor(rep(1, nrow(species_rich_asymp))))
+plotResiduals(resids, quantreg = FALSE)
+testDispersion(resids) # Dispersion plot (dispersion = variance/mean) - we assume mean and variance are the same, so we need to check
+```
+
+
+
+
+Response variable is SpecRich
+```{r}
+sr_biogeo_form2 <- bf(SpecRich ~ scale(dCT) + scale(dGBR) + scale(Reef_100) + scale(Reef_1_Area) + (1|Site),  hu ~ 1, family = hurdle_gamma())
+```
+
+# What priors do we need?
+```{r}
+get_prior(sr_biogeo_form2, data = sp_rich_asymp)
+```
+
+prior(normal(3, 0.5), class = 'Intercept') +      
+  prior(normal(0, 0.4), class = 'b') +
+  prior(student_t(3, 0, 2.5) , class = 'sigma') 
+
+# Similar priors but now with one for shape
+```{r}
+sr_biogeo_priors4 <- 
+prior(normal(4, 0.8), class = 'Intercept') +     
+  prior(normal(0, 0.25), class = 'b') +
+  prior(cauchy(0, 2), class = 'shape')
+
+sr_biogeo_priors5 <- 
+prior(student_t(3, 2.4, 1), class = 'Intercept') +     
+  prior(normal(0, 0.2), class = 'b') +
+  #prior( student_t(3, 0, 1) , class = 'sigma') +
+  prior(cauchy(0, 2), class = 'shape')
+```
+
+
+# Fit model
+```{r}
+sr_biogeo_modpriorsonly2<- brm(formula = sr_biogeo_form2, 
+            data = sp_rich_asymp,
+            prior = sr_biogeo_priors5,
+            sample_prior = 'only',             
+            chains = 3,
+            cores = 3,             
+            iter = 5000,
+            warmup = 1000,         
+            thin = 4,
+            silent = 0,            
+            refresh = 0, 
+            backend = "cmdstanr")
+
+```
+
+
+## Check
+```{r}
+sr_biogeo_modpriorsonly2 |> conditional_effects() |> plot(points = TRUE, ask = FALSE)
+```
+
+
+# Priors look good - include data
+```{r}
+sr_biogeo_mod2 <- sr_biogeo_modpriorsonly2 |> update(sample_prior = 'yes', seed = 1234, control = list(adapt_delta = 0.99, max_treedepth = 20), refresh = 0)
+```
+
+
+
+# CHeck prior - posterior influence
+```{r}
+sr_biogeo_mod2 |> SUYR_prior_and_posterior()
+```
+
+
+# Chain diagnostics
+
+## Trace plots
+```{r chain-check-mod2}
+sr_biogeo_mod2$fit |>  stan_trace()
+## Autocorrelation
+sr_biogeo_mod2$fit |> stan_ac() 
+## rhat
+sr_biogeo_mod2$fit |> stan_rhat() 
+## Effectiveness of sampling
+sr_biogeo_mod2$fit |> stan_ess()
+```
+
+
+# Residuals
+```{r}
+resids <- make_brms_dharma_res(sr_biogeo_mod2, integerResponse = FALSE)
+testUniformity(resids)
+plotResiduals(resids, form = factor(rep(1, nrow(sp_rich_asymp))))
+plotResiduals(resids, quantreg = FALSE)
+testDispersion(resids) # Dispersion plot (dispersion = variance/mean) - we assume mean and variance are the same, so we need to check
+```
+
+
+
+# Residuals look ok
+
+## PP checks
+```{r}
+# Exponential
+pp_check(sr_biogeo_mod2, ndraws = 250)
+
+# Logged
+pred <- posterior_predict(sr_biogeo_mod2)
+bayesplot::ppc_dens_overlay(y = log1p(sp_rich_asymp$SpecRich), 
+                            yrep = log1p(pred[1:200,]))
+```
+Looking much better
+
+
+# Compare models
+
+```{r}
+loo_compare(brms::loo(sr_biogeo_mod),  # The log normal model
+            brms::loo(sr_biogeo_mod2)) # The gamma model
+```
+
+Gamma model much better
+
+
+# Figure
+```{r}
+sr_biogeo_mod2 |> conditional_effects() |> plot(points = FALSE, ask = FALSE)
+
+```
+
+
+## Table
+```{r}
+options(scipen=999) # remove scientific notation
+sr_biogeo_mod2 |> 
+  as_draws_df() |>    # Extract draws
+  exp() |>            # Back transform
+  summarise_draws(median,
+                  HDInterval::hdi,
+                  rhat, ess_bulk, ess_tail,
+                  Pl = ~mean(.x <1),                       # Exceedence prob - on exp scale it's sig if doesn't cross 1
+                  Pg = ~mean(.x >1))|> 
+  as_tibble() |> 
+  mutate(median = round(median, 3),
+         lower = round(lower, 3),
+         upper = round(upper, 3))
+```
+
+
+# Check R2
+```{r}
+#bayes_R2(div_biogeo_mod)
+bayes_R2(sr_biogeo_mod2)
+```
+
+
+```{r}
+sr_biogeo_mod_final <- sr_biogeo_mod2
+save(sr_biogeo_mod_final, file = "data/Rdata/sr_biogeo_model.Rda")
+```
+
+
