@@ -1,0 +1,541 @@
+---
+title: "Abundance ~ Reef_1_Area * Benthic Complex"
+author: "Ben Cresswell"
+date: today
+date-format: "DD/MM/YYYY"
+---
+
+
+```{r}
+# Preliminaries
+#| label: setup
+#| include: false
+knitr::opts_chunk$set(cache.lazy = FALSE,
+                      tidy = "styler")
+options(tinytex.engine = "xelatex")
+```
+
+
+```{r}
+#rm(list=ls())
+source("code/packages.R")
+source("code/extras.R")
+source("code/helper_functions.R")
+load(file = "data/Rdata/predsum.Rdata")
+source(file = "code/wrangling/diw_metadata.R")
+#load(file = "data/Rdata/rmetadata.Rdata")
+```
+
+
+```{r}
+glimpse(predsum)
+```
+
+## Need to add benthic complexity back into this:
+
+```{r}
+abundance_data <- 
+  predsum |> 
+  left_join(rmetadata  |> select(T_ID, Benthic_Complexity))
+```
+
+```{r}
+
+```
+
+
+We know Gamma was best fit for biogeo model:
+```{r}
+abun_habgeo_form <- bf(No_Preds ~ scale(Benthic_Complexity) * scale(Reef_1_Area) + (1|Site),  zi ~ 1, family = zero_inflated_negbinomial(link = "log"))
+```
+
+Priors
+```{r}
+get_prior(abun_habgeo_form, data = abundance_data)
+```
+
+
+```{r}
+abun_habgeo_priors <- 
+prior(normal(2, 2), class = 'Intercept') +
+  prior(normal(0, 0.25), class = 'b') +
+  prior(gamma(2, 2), class = 'shape') +
+  prior(logistic(0, 1), class = 'Intercept', dpar = "zi")
+```
+
+
+# Fit model
+```{r}
+abun_habgeo_modpriorsonly<- brm(formula = abun_habgeo_form, 
+            data = abundance_data,
+            prior = abun_habgeo_priors,
+            sample_prior = 'only',             
+            chains = 3,
+            cores = 3,             
+            iter = 5000,
+            warmup = 1000,         
+            thin = 4,
+            silent = 0,            
+            refresh = 0, 
+            backend = "cmdstanr")
+```
+
+## Check
+```{r}
+abun_habgeo_modpriorsonly |> conditional_effects() |> plot(points = TRUE, ask = FALSE)
+```
+
+
+
+
+
+# Priors look good - include data
+```{r}
+abun_habgeo_mod <- abun_habgeo_modpriorsonly |> update(sample_prior = 'yes', seed = 1234, control = list(adapt_delta = 0.99, max_treedepth = 20), refresh = 0)
+```
+
+
+
+
+# CHeck prior - posterior influence
+```{r}
+abun_habgeo_mod |> SUYR_prior_and_posterior()
+```
+
+
+# Chain diagnostics
+
+## Trace plots
+```{r chain-check-mod}
+abun_habgeo_mod$fit |>  stan_trace()
+## Autocorrelation
+abun_habgeo_mod$fit |> stan_ac() 
+## rhat
+abun_habgeo_mod$fit |> stan_rhat() 
+## Effectiveness of sampling
+abun_habgeo_mod$fit |> stan_ess()
+```
+
+
+# Residuals
+```{r}
+resids <- make_brms_dharma_res(abun_habgeo_mod, integerResponse = FALSE)
+testUniformity(resids)
+plotResiduals(resids, form = factor(rep(1, nrow(abundance_data))))
+plotResiduals(resids, quantreg = FALSE)
+testDispersion(resids) # Dispersion plot (dispersion = variance/mean) - we assume mean and variance are the same, so we need to check
+```
+
+
+# Residuals look ok
+
+## PP checks
+```{r}
+# Exponential
+pp_check(abun_habgeo_mod, ndraws = 250)
+
+# Logged
+pred <- posterior_predict(abun_habgeo_mod)
+bayesplot::ppc_dens_overlay(y = log1p(abundance_data$No_Preds), 
+                            yrep = log1p(pred[1:200,]))
+```
+Looking fine
+
+
+# Figure
+```{r}
+abun_habgeo_mod |> conditional_effects() |> plot(points = FALSE, ask = FALSE)
+
+```
+
+
+# Or 
+```{r}
+abun_habgeo_mod |> 
+gather_draws(`^b_.*`, regex=TRUE) |> 
+    filter(!grepl('Intercept', .variable)) |>
+    ggplot() + 
+    ggridges::geom_density_ridges_gradient(aes(x=exp(.value),  y=.variable, fill = stat(x)),
+                               alpha = 0.4, colour = "white", quantile_lines = TRUE, quantiles = c(0.025, 0.975)) +
+  geom_vline(xintercept = 1, linetype = 'dashed') +
+  scale_x_continuous(trans = scales::log2_trans()) +
+  scale_fill_viridis_c(option = "C") +
+  theme_minimal()
+
+```
+
+
+## Summary table
+```{r}
+abun_habgeo_mod |> 
+  as_draws_df() |>    # Extract draws
+  exp() |>            # Back transform
+  summarise_draws(median,
+                  HDInterval::hdi,
+                  rhat, ess_bulk, ess_tail,
+                  Pl = ~mean(.x <1),      # Exceedence prob - on exp scale it's sig if doesn't cross 1
+                  Pg = ~mean(.x >1))|> 
+  as_tibble() |> 
+  mutate(median = round(median, 3),
+         lower = round(lower, 3),
+         upper = round(upper, 3))
+```
+
+
+There is a significant interaction here, so we need to pick this apart a bit
+
+
+## Need to specify levels of reef size to compare trends
+
+```{r}
+rmetadata %>% 
+  summarise_at(vars(Reef_1_Area), list(median = median, mean = mean, SD = sd, SE = std.error,
+                                  CI5 = ~quantile(., probs = 0.05), CI95 = ~quantile(., probs = 0.95), 
+                                  CI1 = ~quantile(., probs = 0.01), CI99 = ~quantile(., probs = 0.99), 
+                                  Q1 = ~quantile(., probs = 0.25), Q3=~quantile(., probs = 0.75)))
+```
+
+
+```{r}
+reefsize_newdata <- 
+  with(rmetadata, list(Reef_1_Area = c(quantile(Reef_1_Area, probs = 0.25), quantile(Reef_1_Area, probs = 0.75)),
+                       Benthic_Complexity = seq_range(Benthic_Complexity, n = 25)))
+```
+
+
+```{r}
+abun_habgeo_mod |> 
+  emmeans(~ Benthic_Complexity * Reef_1_Area,
+           at = reefsize_newdata,  #
+           epred = TRUE) |> 
+  as_tibble()
+```
+
+
+```{r fig.height=50/26.5, fig.width=100/25.4}
+abun_habgeo_pp1 <- 
+abun_habgeo_mod |>
+  emmeans(~ Benthic_Complexity * Reef_1_Area,
+          at = reefsize_newdata,
+          epred = TRUE) |> 
+  gather_emmeans_draws() |> 
+  as_tibble() |> 
+  mutate(Reef_1_Area = as_factor(Reef_1_Area)) |> 
+  ggplot(aes(x = Benthic_Complexity, y = .value, color = Reef_1_Area)) +
+  geom_line(aes(group = interaction(.draw, Reef_1_Area)), alpha = 0.1) +
+  stat_lineribbon(aes(fill = Reef_1_Area), colour = "black",
+                  size = 0.4, 
+                  point_interval = "median_hdci", 
+                  .width = 0.0001, 
+                  alpha = 1) +
+  theme_bjc() +
+  scale_color_manual(name = "Reef size (kha)", values = hab_pal) +  # Customize colors for Reef_1_Area levels
+  scale_fill_manual(name = "Reef size (kha)", values = hab_pal) +  # Customize colors for Reef_1_Area levels
+  scale_x_continuous("Benthic complexity score", limits = c(0, 5)) +
+  scale_y_continuous(name = "Predator abun. (n.150m2)") +
+  #                    expand = c(0, 07),
+  #                    limits = c(0, 18),
+  #                    breaks = c(0, 5, 10, 15),
+  # #                    position = "left",
+  #                     minor_breaks = NULL) +
+  theme(axis.title.y = element_text(colour = "black", size = 7),
+        axis.text.y = element_text(colour = "black", size = 7),
+        axis.title.x = element_text(colour = "black", size = 7),
+        axis.text.x = element_text(colour = "black", size = 7),
+        strip.text = element_blank(),
+        plot.background = element_rect(fill = "transparent", colour = "black"),
+        legend.position = "inside",
+        legend.position.inside = c(0.65, 0.75),
+        legend.direction = "horizontal",
+        legend.text = element_text(colour = "black", size = 7),
+        legend.title = element_text(colour = "black", size = 7))
+  
+abun_habgeo_pp1
+```
+
+
+```{r}
+benthcomp_newdata <-  with(rmetadata, list(Benthic_Complexity = c(0,5),
+                       Reef_1_Area = seq_range(Reef_1_Area, n = 25)))
+```
+
+
+
+```{r}
+abun_habgeo_mod |>
+  emmeans(~ Reef_1_Area * Benthic_Complexity,
+          at = benthcomp_newdata,
+          epred = TRUE) |> 
+  gather_emmeans_draws() |> 
+  as_tibble() 
+```
+
+
+
+
+```{r fig.height=50/26.5, fig.width=100/25.4}
+abun_habgeo_pp2 <-
+  abun_habgeo_mod |>
+  emmeans(~ Reef_1_Area * Benthic_Complexity,
+          at = benthcomp_newdata,
+          epred = TRUE) |> 
+  gather_emmeans_draws() |> 
+  as_tibble() |> 
+  mutate(Benthic_Complexity = as_factor(Benthic_Complexity)) |> 
+  ggplot(aes(x = Reef_1_Area, y = .value, color = Benthic_Complexity)) +
+  geom_line(aes(group = interaction(.draw, Benthic_Complexity)), alpha = 0.1) +
+  stat_lineribbon(aes(fill = Benthic_Complexity), colour = "black",
+                  size = 0.4, 
+                  point_interval = "median_hdci", 
+                  .width = 0.0001, 
+                  alpha = 1) +
+  theme_bjc() +
+  scale_color_manual(name = "Benth. complex", values = hab_pal) +  # Customize colors for Reef_1_Area levels
+  scale_fill_manual(name = "Benth. complex", values = hab_pal) +  # Customize colors for Reef_1_Area levels
+  scale_x_continuous("Reef size (kha)") +
+  scale_y_continuous(name = "Predator abun. (n.150m2)",
+                     expand = c(0, 07),
+  #                    limits = c(0, 18),
+  #                    breaks = c(0, 5, 10, 15),
+  #                    position = "left",
+                      minor_breaks = NULL) +
+  theme(axis.title.y = element_text(colour = "black", size = 7),
+        axis.text.y = element_text(colour = "black", size = 7),
+        axis.title.x = element_text(colour = "black", size = 7),
+        axis.text.x = element_text(colour = "black", size = 7),
+        strip.text = element_blank(),
+        #plot.margin = unit(c(0, 0, 0, 0), "mm"),
+        plot.background = element_rect(fill = "transparent", colour = "black"),
+        legend.position = "inside",
+        legend.position.inside = c(0.65, 0.75),
+        legend.direction = "horizontal",
+        legend.text = element_text(colour = "black", size = 7),
+        legend.title = element_text(colour = "black", size = 7)) 
+
+abun_habgeo_pp2
+```
+
+
+# Combine
+```{r fig.height=80/26.5, fig.width=100/25.4}
+abun_habgeo_fig <- abun_habgeo_pp1 / abun_habgeo_pp2
+abun_habgeo_fig
+```
+
+
+# Save
+```{r}
+ggsave(filename = "output/abun_habgeo_fig.pdf", plot = abun_habgeo_fig, height = 100, width = 100, device = cairo_pdf, units = "mm", dpi = 300)
+```
+
+
+
+
+
+
+
+
+
+```{r fig.width=50/25.4, fig.height=100/25.4}
+abun_habeffects_draws <- 
+abun_habgeo_mod |> 
+ gather_draws(`^b_.*`, regex=TRUE)  |> 
+  filter(!grepl("Intercept", .variable))  |> 
+  filter(!grepl(":", .variable))
+```
+
+
+
+
+```{r fig.width=40/25.4, fig.height=40/25.4}
+#abun_effects_plot <- 
+  abun_habeffects_draws |> 
+  ggplot(aes(x = .value, y = .variable, fill = .variable, group = .variable)) +
+  geom_vline(xintercept = 0, lty = 11) +
+  stat_halfeye(.width = c(0.8, 0.95), point_interval = "median_hdi", slab_colour = "black", slab_linewidth = 0.5) +
+  theme_bjc() +
+  scale_fill_manual(values =  c("#117733", "#332288")) +
+  scale_y_discrete(position = "left", expand = c(0.05, 0)) +
+  #annotate(geom = "text", label = "P=0.53", x = -0.4, y = 1, colour = "black", size = 3.5, family = "Arial", hjust = 0) +
+  #scale_x_continuous(breaks = c(-0.5, 0, 0.5), limits = c(-0.9, 0.6)) +
+  theme(axis.title.y = element_blank(),
+        axis.title.x = element_text(colour = "black", size = 9),
+        axis.text.y = element_blank(),
+        axis.text.x = element_text(colour = "black", size = 8),
+        strip.text = element_blank()) +
+  guides(fill = "none") +
+  labs(x = "Scaled marginal effect")
+```
+
+
+### Reef100
+```{r fig.width=50/25.4, fig.height=25/25.4}
+Reef100vHab_abun_dens <- 
+abun_habeffects_draws |> 
+  filter(grepl("100", .variable)) |> 
+  ggplot(aes(x = .value, y = .variable, fill = .variable, group = .variable)) +
+  geom_vline(xintercept = 0, lty = 11) +
+  stat_halfeye(aes(fill = after_stat(ggdist::cut_cdf_qi(cdf,
+                                         .width = c(0.8,0.95,1),
+                                         labels = scales::percent_format()))),
+    .width = c(0.8, 0.95), point_interval = "median_qi", slab_colour = "black", slab_linewidth = 0.5,
+    point_size = 2) +
+  theme_bjc() +
+  scale_fill_manual(values = Reef_100_pal) +
+  scale_y_discrete(position = "left", expand = c(0.09, 0)) +
+  #annotate(geom = "text", label = "P=0.53", x = -0.4, y = 1, colour = "black", size = 3.5, family = "Arial", hjust = 0) +
+  scale_x_continuous(breaks = c(-1, 1), limits = c(-0.6, 0.4), minor_breaks = NULL) +
+  theme(axis.title.y = element_blank(),
+        axis.title.x = element_text(colour = "black", size = 7),
+        axis.text.y = element_blank(),
+        axis.text.x = element_blank(),
+        plot.margin = unit(c(0,0,0,0), "mm")) +
+  guides(fill = "none") +
+  labs(x = "\n")
+
+Reef100vHab_abun_dens
+```
+
+### Habitat
+```{r fig.width=50/25.4, fig.height=25/25.4}
+HabvR100_abun_dens <- 
+abun_habeffects_draws |> 
+  filter(grepl("Benth", .variable)) |> 
+  ggplot(aes(x = .value, y = .variable, fill = .variable, group = .variable)) +
+  geom_vline(xintercept = 0, lty = 11) +
+  stat_halfeye(aes(fill = after_stat(ggdist::cut_cdf_qi(cdf,
+                                         .width = c(0.8,0.95,1),
+                                         labels = scales::percent_format()))),
+    .width = c(0.8, 0.95), point_interval = "median_qi", slab_colour = "black", slab_linewidth = 0.5,
+    point_size = 2) +
+  theme_bjc() +
+  scale_fill_manual(values = hab_pal) +
+  scale_y_discrete(position = "left", expand = c(0.09, 0)) +
+  #annotate(geom = "text", label = "P=0.53", x = -0.4, y = 1, colour = "black", size = 3.5, family = "Arial", hjust = 0) +
+  scale_x_continuous(breaks = c(-1, 1), limits = c(-0.6, 0.4), minor_breaks = NULL) +
+  theme(axis.title.y = element_blank(),
+        axis.title.x = element_text(colour = "black", size = 7),
+        axis.text.y = element_blank(),
+        axis.text.x = element_text(colour = "black", size = 7),
+        plot.margin = unit(c(0,0,0,0), "mm")) +
+  guides(fill = "none") +
+  labs(x = "\nEffect distribution")
+
+HabvR100_abun_dens
+```
+
+```{r fig.width=50/25.4, fig.height=50/25.4}
+Reef100vHab_abun_dens/ HabvR100_abun_dens
+```
+
+
+
+# Reef_100 Trend
+```{r fig.height=25/25.4, fig.width=50/25.4}
+Reef100Hab_abun_trend <- 
+abun_habgeo_mod |> 
+  emmeans(~ Reef_100, 
+          type = 'link', 
+          epred = TRUE, 
+          #at = abundance_data |> with(list(Reef_100 = seq_range(Reef_100, n = 100)))) |>  #
+          at = abundance_data |> distinct(Reef_100)) |>  #
+  regrid()  |> 
+  gather_emmeans_draws()  |> 
+  #as_tibble() |> 
+  ggplot(aes(x = Reef_100, y = .value)) +
+  geom_line(aes(group = .draw), colour = "#332288", alpha = 0.1) +
+  stat_lineribbon(colour = "black", size = 0.4, point_interval = "median_hdci", .width = 0.0001, alpha = 1) +
+  theme_bjc() +
+  scale_x_continuous("Reef isol (kha reef w/in 100km)") +
+  scale_y_continuous(#"Sp. rich (.site/depth)", 
+                     expand = c(0, 0.07),
+                     limits = c(0,40),
+                     breaks = c(0, 10, 20, 30),
+                     position = "left",
+                     minor_breaks = NULL) +
+  theme(axis.title.y = element_text(colour = "black", size = 10),
+        axis.text.y = element_text(colour = "black", size = 7),
+        axis.title.x = element_text(colour = "black", size = 7),
+        axis.text.x = element_text(colour = "black", size = 7),
+        plot.margin = unit(c(0,0,0,0), "mm"),
+        #plot.border = element_rect(fill = "transparent", colour = "black"),      
+        legend.position = "none") +
+  labs(y = "\n") # Make room for combined y lab title
+
+
+Reef100Hab_abun_trend
+```
+
+
+
+# Benthic complex Trend
+```{r fig.height=25/26.5, fig.width=50/25.4}
+hab_abun_trend <- 
+abun_habgeo_mod |> 
+  emmeans(~ Benthic_Complexity, type = 'link', 
+          epred = TRUE, 
+#          at = abundance_data |> with(list(Benthic_Complexity = seq_range(Benthic_Complexity, n = 100)))) |>  #
+          at = list(Benthic_Complexity = seq(from = 0, to = 5, by = 0.1))) |>  #
+  regrid()  |> 
+  gather_emmeans_draws()  |> 
+  as_tibble() |> 
+  ggplot(aes(x = Benthic_Complexity, y = .value)) +
+  geom_line(aes(group = .draw), colour = "#117733", alpha = 0.1) +
+  stat_lineribbon(colour = "black", size = 0.4, point_interval = "median_hdci", .width = 0.0001, alpha = 1) +
+  theme_bjc() +
+  scale_x_continuous("Benthic complexity score", limits = c(0,5)) +
+  scale_y_continuous(#"Sp. rich (.site/depth)", 
+                     expand = c(0, 0.07),
+                     limits = c(0,40),
+                     breaks = c(0, 10, 20, 30),
+                     position = "left",
+                     minor_breaks = NULL) +
+  theme(axis.title.y = element_text(colour = "black", size = 10),
+        axis.text.y = element_text(colour = "black", size = 7),
+        axis.title.x = element_text(colour = "black", size = 7),
+        axis.text.x = element_text(colour = "black", size = 7),
+        plot.margin = unit(c(0,0,0,0), "mm"),
+        #plot.border = element_rect(fill = "transparent", colour = "black"),      
+        legend.position = "none") +
+  labs(y = "\n") # Make room for combined y lab title
+
+
+hab_abun_trend
+```
+
+
+
+```{r fig.height=50/26.5, fig.width=100/25.4}
+plot_grid(hab_abun_trend, Reef100Hab_abun_trend, nrow = 2)
+```
+
+
+```{r fig.height=25/26.5, fig.width=100/25.4}
+# Trend and 
+
+# Isol results combined
+combined_isol <- plot_grid(Reef100Hab_abun_trend, Reef100vHab_abun_dens, ncol = 2, rel_widths = c(2.4, 1))
+combined_hab <- plot_grid(hab_abun_trend, HabvR100_abun_dens, ncol = 2, rel_widths = c(2.4, 1))
+
+combined_isol
+combined_hab
+```
+
+
+```{r fig.height=50/26.5, fig.width=80/25.4}
+combined_isol /
+combined_hab
+
+combined_abun_fig <- combined_isol/combined_hab
+
+combined_abun_fig +
+ annotate(geom = "text", label = "Predator sp. rich (.site/depth)", x = 0.05, y = 1, colour = "black", size = 2.5, family = "Arial", angle = 90) +
+  theme(plot.margin = unit(c(0,0,0,0), "mm"))
+  
+  
+
+```
+
+
+
+

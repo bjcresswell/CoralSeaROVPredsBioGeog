@@ -1,0 +1,495 @@
+---
+title: "Abundance modelling - results"
+author: "Ben Cresswell"
+date: today
+date-format: "DD/MM/YYYY"
+format: 
+  html:
+    ## Format
+    theme: spacelab
+    html-math-method: mathjax
+    ## Table of contents
+    toc: true
+    toc-float: true
+    ## Numbering
+    number-sections: true
+    number-depth: 3
+    ## Layout
+    fig-caption-location: "bottom"
+    fig-align: "center"
+    fig-width: 3
+    fig-height: 2
+    fig-dpi: 100
+    tbl-cap-location: top
+    ## Code
+    code-fold: false
+    code-tools: true
+    code-summary: "Show the code"
+    code-line-numbers: true
+    code-block-border-left: "#ccc"
+    highlight-style: zenburn
+    ## Execution
+    execute:
+      echo: true
+      cache: true
+    ## Rendering
+    embed-resources: true
+documentclass: article
+fontsize: 12pt
+execute-dir: project
+mainfont: Arial
+classoption: a4paper
+---
+
+
+```{r}
+# Preliminaries
+#| label: setup
+#| include: false
+knitr::opts_chunk$set(cache.lazy = FALSE,
+                      tidy = "styler")
+options(tinytex.engine = "xelatex")
+```
+
+
+```{r}
+#rm(list=ls())
+
+# Load package and functions needed
+source("code/packages.R")
+source("code/extras.R")
+source("code/helper_functions.R")
+
+# Load dataframe and model
+#sourceRmd("code/abundance/diw_abund.Rmd")
+#sourceRmd("code/abundance/abundance_model_fit.Rmd")
+
+# Or
+load("data/Rdata/predsum.Rdata")
+load("data/Rdata/abun_biogeo_model.Rda")
+```
+
+
+
+## Conditional effects plot again to aid interpretation
+```{r}
+abun_biogeo_model |> conditional_effects() |> plot(ask = FALSE, points = FALSE) # Without raw data
+#abun_biogeo_model_nodep_final |> conditional_effects() |> plot(ask = FALSE, points = TRUE) # With raw data overplotted
+```
+
+## Summary table
+
+# tidyMCMC is on link scale)
+```{r}
+# abun_biogeo_model$fit |> 
+#   tidyMCMC(estimate.method = 'median',
+#              conf.int = TRUE,  conf.method = 'HPDinterval',
+#              rhat = TRUE, ess = TRUE)
+```
+
+
+```{r}
+abun_biogeo_model |> 
+  as_draws_df() |>    # Extract draws
+  exp() |>            # Back transform
+  summarise_draws(median,
+                  HDInterval::hdi,
+                  rhat, ess_bulk, ess_tail,
+                  Pl = ~mean(.x <1),                       # Exceedence prob - on exp scale it's sig if doesn't cross 1
+                  Pg = ~mean(.x >1))|> 
+  as_tibble() |> 
+  mutate(median = round(median, 3),
+         lower = round(lower, 3),
+         upper = round(upper, 3))
+```
+
+
+
+Need something that is interpretable
+
+
+
+
+```{r fig.width=50/25.4, fig.height=100/25.4}
+abun_effects_draws <- 
+abun_biogeo_model |> 
+ gather_draws(`^b_.*`, regex=TRUE)  |> 
+  filter(!grepl("Intercept", .variable))   |> 
+  mutate(Variable = factor(case_when(grepl("CT", .variable) ~ "Distance\nCT (km)",
+                                     grepl("GBR", .variable) ~ "Distance to\n GBR (km)",
+                                     grepl("Reef_100", .variable) ~ "Reef w/in\n100km (kha)",
+                                     grepl("Reef_1_Area", .variable) ~ "Reef size\n(kha)")))
+```
+
+
+
+
+```{r fig.width=50/25.4, fig.height=100/25.4}
+#abun_effects_plot <- 
+  abun_effects_draws |> 
+  ggplot(aes(x = .value, y = Variable, fill = Variable, group = Variable)) +
+  geom_vline(xintercept = 0, lty = 11) +
+  stat_halfeye(.width = c(0.8, 0.95), point_interval = "median_hdi", slab_colour = "black", slab_linewidth = 0.5) +
+  theme_bjc() +
+  scale_fill_manual(values = cb_palette) +
+  scale_y_discrete(position = "left", expand = c(0.05, 0)) +
+  #annotate(geom = "text", label = "P=0.53", x = -0.4, y = 1, colour = "black", size = 3.5, family = "Arial", hjust = 0) +
+  scale_x_continuous(breaks = c(-0.5, 0, 0.5), limits = c(-0.9, 0.6)) +
+  theme(axis.title.y = element_blank(),
+        axis.title.x = element_text(colour = "black", size = 9),
+        #axis.text.y = element_blank(),
+        axis.text.x = element_text(colour = "black", size = 8),
+        strip.text = element_blank()) +
+  guides(fill = "none") +
+  labs(x = "Scaled marginal effect")
+abun_effects_plot
+```
+
+```{r}
+ggsave(filename = "output/abun_effects_fig.pdf", plot = abun_effects_plot, height = 80, width = 50, device = cairo_pdf, units = "mm", dpi = 300)
+```
+
+
+## Want to get the credible intervals showing up on the actual slabs so need to do these manually:
+
+### dGBR
+```{r fig.width=50/25.4, fig.height=25/25.4}
+dGBR_abun_dens <- 
+abun_effects_draws |> 
+  filter(grepl("GBR", .variable)) |> 
+  ggplot(aes(x = .value, y = Variable, fill = Variable, group = Variable)) +
+  geom_vline(xintercept = 0, lty = 11) +
+  stat_halfeye(aes(fill = after_stat(ggdist::cut_cdf_qi(cdf,
+                                         .width = c(0.8,0.95,1),
+                                         labels = scales::percent_format()))),
+    .width = c(0.8, 0.95), point_interval = "median_qi", slab_colour = "black", slab_linewidth = 0.5,
+    point_size = 2) +
+  theme_bjc() +
+  scale_fill_manual(values = dGBR_pal) +
+  scale_y_discrete(position = "left", expand = c(0.07, 0)) +
+  #annotate(geom = "text", label = "P=0.53", x = -0.4, y = 1, colour = "black", size = 3.5, family = "Arial", hjust = 0) +
+  scale_x_continuous(breaks = c(-0.5, 0, 0.5), limits = c(-0.85, 0.55), minor_breaks = NULL) +
+  theme(axis.title.y = element_blank(),
+        axis.title.x = element_blank(),
+        axis.text.y = element_blank(),
+        axis.text.x = element_blank(),
+        plot.margin = unit(c(0,0,0,0), "mm")) +
+  guides(fill = "none") +
+  labs(x = "Scaled marginal effect")
+
+dGBR_abun_dens
+```
+
+
+### dCT
+```{r fig.width=50/25.4, fig.height=25/25.4}
+dCT_abun_dens <- 
+abun_effects_draws |> 
+  filter(grepl("CT", .variable)) |> 
+  ggplot(aes(x = .value, y = Variable, fill = Variable, group = Variable)) +
+  geom_vline(xintercept = 0, lty = 11) +
+  stat_halfeye(aes(fill = after_stat(ggdist::cut_cdf_qi(cdf,
+                                         .width = c(0.8,0.95,1),
+                                         labels = scales::percent_format()))),
+    .width = c(0.8, 0.95), point_interval = "median_qi", slab_colour = "black", slab_linewidth = 0.5,
+    point_size = 2) +
+  theme_bjc() +
+  scale_fill_manual(values = dCT_pal) +
+  scale_y_discrete(position = "left", expand = c(0.07, 0)) +
+  #annotate(geom = "text", label = "P=0.53", x = -0.4, y = 1, colour = "black", size = 3.5, family = "Arial", hjust = 0) +
+  scale_x_continuous(breaks = c(-0.5, 0, 0.5), limits = c(-0.85, 0.55), minor_breaks = NULL) +
+  theme(axis.title.y = element_blank(),
+        axis.title.x = element_blank(),
+        axis.text.y = element_blank(),
+        axis.text.x = element_blank(),
+        plot.margin = unit(c(0,0,0,0), "mm")) +
+  guides(fill = "none") +
+  labs(x = "Scaled marginal effect")
+
+dCT_abun_dens
+```
+
+
+### Reef_1_Area
+```{r fig.width=50/25.4, fig.height=25/25.4}
+Reef1Area_abun_dens <- 
+abun_effects_draws |> 
+  filter(grepl("Area", .variable)) |> 
+  ggplot(aes(x = .value, y = Variable, fill = Variable, group = Variable)) +
+  geom_vline(xintercept = 0, lty = 11) +
+  stat_halfeye(aes(fill = after_stat(ggdist::cut_cdf_qi(cdf,
+                                         .width = c(0.8,0.95,1),
+                                         labels = scales::percent_format()))),
+    .width = c(0.8, 0.95), point_interval = "median_qi", slab_colour = "black", slab_linewidth = 0.5,
+    point_size = 2) +
+  theme_bjc() +
+  scale_fill_manual(values = Reef_1_Area_pal) +
+  scale_y_discrete(position = "left", expand = c(0.07, 0)) +
+  #annotate(geom = "text", label = "P=0.53", x = -0.4, y = 1, colour = "black", size = 3.5, family = "Arial", hjust = 0) +
+  scale_x_continuous(breaks = c(-0.5, 0, 0.5), limits = c(-0.85, 0.55), minor_breaks = NULL) +
+  theme(axis.title.y = element_blank(),
+        axis.title.x = element_blank(),
+        axis.text.y = element_blank(),
+        axis.text.x = element_blank(),
+        plot.margin = unit(c(0,0,0,0), "mm")) +
+  guides(fill = "none") +
+  labs(x = "Scaled marginal effect")
+
+Reef1Area_abun_dens
+```
+
+
+### Reef_100
+```{r fig.width=50/25.4, fig.height=25/25.4}
+Reef100_abun_dens <- 
+abun_effects_draws |> 
+  filter(grepl("100", .variable)) |> 
+  ggplot(aes(x = .value, y = Variable, fill = Variable, group = Variable)) +
+  geom_vline(xintercept = 0, lty = 11) +
+  stat_halfeye(aes(fill = after_stat(ggdist::cut_cdf_qi(cdf,
+                                         .width = c(0.8,0.95,1),
+                                         labels = scales::percent_format()))),
+    .width = c(0.8, 0.95), point_interval = "median_qi", slab_colour = "black", slab_linewidth = 0.5,
+    point_size = 2) +
+  theme_bjc() +
+  scale_fill_manual(values = Reef_100_pal) +
+  scale_y_discrete(position = "left", expand = c(0.08, 0)) +
+  #annotate(geom = "text", label = "P=0.53", x = -0.4, y = 1, colour = "black", size = 3.5, family = "Arial", hjust = 0) +
+  scale_x_continuous(breaks = c(-0.5, 0, 0.5), limits = c(-0.85, 0.55), minor_breaks = NULL) +
+  theme(axis.title.y = element_blank(),
+        axis.title.x = element_text(colour = "black", size = 7),
+#        axis.title.x = element_blank(),
+        axis.text.y = element_blank(),
+        axis.text.x = element_text(colour = "black", size = 7),
+#        axis.text.x = element_blank(),
+        plot.margin = unit(c(0,0,2,0), "mm")) +
+  guides(fill = "none") +
+  labs(x = "Scaled marginal effect")
+
+Reef100_abun_dens
+```
+
+# Combine density plots for LHS of main figure
+```{r fig.width=50/25.4, fig.height=100/25.4}
+abun_plot_LHS <- 
+dGBR_abun_dens /
+dCT_abun_dens /
+Reef1Area_abun_dens /
+Reef100_abun_dens 
+
+
+
+abun_plot_LHS <- plot_grid(dGBR_abun_dens, dCT_abun_dens, Reef1Area_abun_dens, Reef100_abun_dens, ncol = 1) +
+    theme(plot.background = element_rect(fill = "white", colour = "black"))
+
+
+
+
+abun_plot_LHS <- abun_plot_LHS +
+  theme(plot.background = element_rect(fill = "white", colour = "black"))
+
+abun_plot_LHS
+```
+
+
+
+
+# Now can do trend plots to go with these:
+
+## dGBR
+
+```{r fig.height=25/26.5, fig.width=50/25.4}
+dGBR_abun_trend <- 
+abun_biogeo_model |> 
+  emmeans(~ dGBR, type = 'link', 
+          epred = TRUE, 
+          at = predsum |> with(list(dGBR = seq_range(dGBR, n = 100)))) |>  # Just building new data grid within emmeans
+  regrid()  |> 
+  gather_emmeans_draws()  |> 
+  as_tibble() |> 
+  ggplot(aes(x = dGBR, y = .value)) +
+  geom_line(aes(group = .draw), colour = "#999933", alpha = 0.1) +
+  stat_lineribbon(colour = "black", size = 0.4, point_interval = "median_qi", .width = 0.0001, alpha = 1) +
+  theme_bjc() +
+  scale_x_continuous("Distance GBR (km)", minor_breaks = NULL) +
+  scale_y_continuous("No. preds (.150m2)", 
+                     expand = c(0, 0.1),
+                     limits = c(0,10),
+                     breaks = c(0, 5, 10),
+                     position = "right",
+                     minor_breaks = NULL) +
+  theme(axis.title.y = element_blank(),
+        axis.text.y = element_text(colour = "black", size = 7),
+        axis.title.x = element_text(colour = "black", size = 7),
+        axis.text.x = element_text(colour = "black", size = 7),
+        #plot.margin = unit(c(0,0,2,0), "mm"),
+        plot.background = element_rect(fill = "white", colour = "black"),
+        legend.position = "none")
+
+dGBR_abun_trend
+```
+
+# dCT
+```{r fig.height=25/26.5, fig.width=50/25.4}
+dCT_abun_trend <- 
+abun_biogeo_model |> 
+  emmeans(~ dCT, type = 'link', 
+          epred = TRUE, 
+          at = predsum |> with(list(dCT = seq_range(dCT, n = 100)))) |>  # Just building new data grid within emmeans
+  regrid()  |> 
+  gather_emmeans_draws()  |> 
+  as_tibble() |> 
+  ggplot(aes(x = dCT, y = .value)) +
+  geom_line(aes(group = .draw), colour = "#44aa99", alpha = 0.1) +
+  stat_lineribbon(colour = "black", size = 0.4, point_interval = "median_hdci", .width = 0.0001, alpha = 1) +
+  theme_bjc() +
+  scale_x_continuous("Distance CT (km)") +
+  scale_y_continuous("No. preds (.150m2)", 
+                     expand = c(0, 0.1),
+                     limits = c(0,10),
+                     breaks = c(0, 5, 10),
+                     position = "right",
+                     minor_breaks = NULL) +
+  theme(axis.title.y = element_blank(),
+        axis.text.y = element_text(colour = "black", size = 7),
+        axis.title.x = element_text(colour = "black", size = 7),
+        axis.text.x = element_text(colour = "black", size = 7),
+        plot.background = element_rect(fill = "white", colour = "black"),
+        #plot.margin = unit(c(0,0,2,0), "mm"),
+        legend.position = "none")
+
+
+dCT_abun_trend
+```
+
+# Reef_1_Area
+```{r fig.height=25/26.5, fig.width=50/25.4}
+Reef1Area_abun_trend <- 
+abun_biogeo_model |> 
+  emmeans(~ Reef_1_Area, type = 'link', 
+          epred = TRUE, 
+          at = predsum |> with(list(Reef_1_Area = seq_range(Reef_1_Area, n = 100)))) |>  #
+  regrid()  |> 
+  gather_emmeans_draws()  |> 
+  as_tibble() |> 
+  ggplot(aes(x = Reef_1_Area, y = .value)) +
+  geom_line(aes(group = .draw), colour = "#aa4499", alpha = 0.1) +
+  stat_lineribbon(colour = "black", size = 0.4, point_interval = "median_hdci", .width = 0.0001, alpha = 1) +
+  theme_bjc() +
+  scale_x_continuous("Reef size (kha)") +
+  scale_y_continuous("No. preds (.150m2)", 
+                     expand = c(0, 0.1),
+                     limits = c(0,10),
+                     breaks = c(0, 5, 10),
+                     position = "right",
+                     minor_breaks = NULL) +
+  theme(axis.title.y = element_blank(),
+        axis.text.y = element_text(colour = "black", size = 7),
+        axis.title.x = element_text(colour = "black", size = 7),
+        axis.text.x = element_text(colour = "black", size = 7),
+        #plot.margin = unit(c(0,0,2,0), "mm"),
+        plot.background = element_rect(fill = "white", colour = "black"),
+        legend.position = "none")
+
+
+Reef1Area_abun_trend
+```
+
+
+# Reef_100
+```{r fig.height=25/26.5, fig.width=50/25.4}
+Reef100_abun_trend <- 
+abun_biogeo_model |> 
+  emmeans(~ Reef_100, type = 'link', 
+          epred = TRUE, 
+          at = predsum |> with(list(Reef_100 = seq_range(Reef_100, n = 100)))) |>  #
+  regrid()  |> 
+  gather_emmeans_draws()  |> 
+  as_tibble() |> 
+  ggplot(aes(x = Reef_100, y = .value)) +
+  geom_line(aes(group = .draw), colour = "#332288", alpha = 0.1) +
+  stat_lineribbon(colour = "black", size = 0.4, point_interval = "median_hdci", .width = 0.0001, alpha = 1) +
+  theme_bjc() +
+  scale_x_continuous("Reef isol (kha reef w/in 100km)") +
+  scale_y_continuous("No. preds (.150m2)", 
+                     expand = c(0, 0.1),
+                     limits = c(0,12),
+                     breaks = c(0, 5, 10),
+                     position = "right",
+                     minor_breaks = NULL) +
+  theme(axis.title.y = element_blank(),
+        axis.text.y = element_text(colour = "black", size = 7),
+        axis.title.x = element_text(colour = "black", size = 7),
+        axis.text.x = element_text(colour = "black", size = 7),
+        #plot.margin = unit(c(0,0,2,0), "mm"),
+        plot.background = element_rect(fill = "white", colour = "black"),
+        legend.position = "none")
+
+
+Reef100_abun_trend
+```
+
+
+
+
+# Combine to make RHS of plot
+```{r fig.height=100/26.5, fig.width=50/25.4}
+abun_plot_RHS <- 
+dGBR_abun_trend /
+dCT_abun_trend /
+Reef1Area_abun_trend /
+Reef100_abun_trend +
+  ylab("No. preds (.150m2)")
+
+abun_plot_RHS
+
+
+```
+
+
+
+
+```{r fig.height=100/26.5, fig.width=50/25.4}
+abun_plot_RHS2 <- plot_grid(dGBR_abun_trend, dCT_abun_trend, Reef1Area_abun_trend, Reef100_abun_trend, ncol = 1) +
+    theme(plot.background = element_rect(fill = "white", colour = "black")) +
+  ylab("No. preds (.150m2)")
+
+abun_plot_RHS2
+```
+
+```{r}
+ggsave(filename = "output/abun_trends_fig.pdf", plot = abun_plot_RHS, height = 100, width = 50, device = cairo_pdf, units = "mm", dpi = 300)
+```
+
+
+
+```{r fig.height=100/26.5, fig.width=100/25.4}
+abun_plot_final <- 
+  plot_grid(abun_plot_LHS, abun_plot_RHS, ncol = 2, rel_widths = c(0.5,1)) +
+  theme(plot.background = element_rect(fill = "white", colour = "black"),
+        plot.margin = unit(c(0,10,0,0), "mm"))
+
+
+abun_plot_final2 <- 
+  abun_plot_LHS + 
+  abun_plot_RHS +
+  plot_layout(ncol = 2, widths = c(0.5,1)) +
+  plot_annotation(tag_levels = 'A') +
+  theme(plot.background = element_rect(fill = "white", colour = "black"),
+        plot.margin = unit(c(0,10,0,0), "mm"))
+```
+
+
+```{r}
+abun_plot_final
+abun_plot_final2
+
+```
+
+# Save
+```{r}
+ggsave(filename = "output/abun_effects_fig.pdf", plot = abun_plot_final, height = 100, width = 100, device = cairo_pdf, units = "mm", dpi = 300)
+```
+
+
+

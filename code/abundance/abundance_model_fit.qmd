@@ -1,0 +1,248 @@
+---
+title: "Modelling predator abundance against biogeographic parameters"
+author: "Ben Cresswell"
+date: today
+date-format: "DD/MM/YYYY"
+format: 
+  html:
+    ## Format
+    theme: spacelab
+    html-math-method: mathjax
+    ## Table of contents
+    toc: true
+    toc-float: true
+    ## Numbering
+    number-sections: true
+    number-depth: 3
+    ## Layout
+    fig-caption-location: "bottom"
+    fig-align: "center"
+    fig-width: 4.8
+    fig-height: 3
+    fig-dpi: 100
+    tbl-cap-location: top
+    ## Code
+    code-fold: false
+    code-tools: true
+    code-summary: "Show the code"
+    code-line-numbers: true
+    code-block-border-left: "#ccc"
+    highlight-style: zenburn
+    ## Execution
+    execute:
+      echo: true
+      cache: true
+    ## Rendering
+    embed-resources: true
+documentclass: article
+fontsize: 12pt
+execute-dir: project
+mainfont: Arial
+classoption: a4paper
+---
+
+
+```{r}
+# Preliminaries
+#| label: setup
+#| include: false
+knitr::opts_chunk$set(cache.lazy = FALSE,
+                      tidy = "styler")
+options(tinytex.engine = "xelatex")
+#rm(list=ls())
+source("code/packages.R")
+source("code/extras.R")
+source("code/helper_functions.R")
+sourceRmd("code/abundance/diw_abund.Rmd")
+#load("data/Rdata/predsum.Rdata")
+```
+
+
+
+# Introduction
+This document models predator abundance against the main biogeography and isolation-type metrics that might be expected to explain large scale patterns in abundance. We have a number of options available:
+
+```{r}
+predsum |> glimpse()
+#summary(predsum$Reef_100)
+```
+
+
+## North-South variables
+**Site_lat**          cont var - distance from equator in ° latitude
+**dCT**               cont var - distance from center of Coral Triangle in km
+**Region**            4 factor cat var - Far North, North, Central, South. Could be used if cont vars don't work
+
+## East-West variables
+**Site_long**         cont var - distance from UTC in ° long
+**dGBR**              cont var - distance from GBR shelf in km. More usable.
+
+## Habitat patch isolation variables
+**Reef_1_Area**       cont var - size of reef in kHa
+**Reef_Size**         categorical version of Reef_1_Area, split into 3 levels
+**Reef_100**          cont var - amount of reef area within 100km in kHa
+
+
+
+# First I want to check co-linearity of the NSEW predictors
+Probably easiest to do this with the metadata
+
+```{r}
+# Lat vs dCT
+rmetadata |> 
+  select(Site_lat, dCT) |> 
+  distinct() |> 
+  ggplot() + 
+  geom_point(aes(x = -Site_lat, y = dCT))  +
+  geom_smooth(aes(x = -Site_lat, y = dCT), method = "glm") +
+  theme_minimal() +
+  scale_y_continuous(name = "Distance from CT (km)") +
+  scale_x_continuous(name = "Latitude (°S)")
+
+# Long vs dGBR
+rmetadata |> 
+  select(Site_long, dGBR) |> 
+  distinct() |> 
+  ggplot() + 
+  geom_point(aes(x = Site_long, y = dGBR))  +
+  geom_smooth(aes(x = Site_long, y = dGBR), method = "glm") +
+  theme_minimal() +
+  scale_y_continuous(name = "Distance from GBR (km)") +
+  scale_x_continuous(name = "Longitude (°E)")
+
+```
+
+Can use any of these I think.
+
+
+# Set model formula
+```{r}
+abun_biogeo_form <- bf(No_Preds ~ scale(dCT) + scale(dGBR) + scale(Reef_100) + scale(Reef_1_Area) + (1|Site), zi ~ 1, family = zero_inflated_negbinomial(link = "log"))
+```
+
+## Check what priors we need to estimate
+```{r}
+get_prior(abun_biogeo_form, data = predsum)
+```
+
+
+## Set priors (start with the same as the isol model)
+```{r}
+abun_biogeo_priors <-  
+  prior(normal(2, 2), class = 'Intercept') +
+  prior(normal(0, 0.25), class = 'b') +
+  prior(gamma(2, 2), class = 'shape') +
+  prior(logistic(0, 1), class = 'Intercept', dpar = "zi")
+```
+
+
+## Fit model: 
+```{r}
+abun_biogeo_model_priorsonly <- 
+  brm(abun_biogeo_form,
+  data = predsum,
+  prior = abun_biogeo_priors,
+  sample_prior = 'only',              
+  chains = 3,
+  cores = 3,
+  iter = 5000, 
+  warmup = 1000, 
+  thin = 4,
+  seed = 1234,
+  silent = 0,
+  refresh = 0,
+  backend = "cmdstanr")
+```
+
+
+## Check how wide priors are
+```{r}
+abun_biogeo_model_priorsonly |> conditional_effects() |>  plot(points = TRUE, ask = FALSE, plot = TRUE) 
+```
+
+Priors look wide enough
+
+## Fit with data
+```{r cache=TRUE}
+abun_biogeo_model <- abun_biogeo_model_priorsonly |> update(sample_prior = "yes", cores = 3, seed = 1234, control = list(adapt_delta = 0.99, max_treedepth = 20), refresh = 0)
+```
+
+
+## Check influence of priors
+```{r}
+abun_biogeo_model |> SUYR_prior_and_posterior()
+```
+
+
+# Model validation
+
+## DHARMa residuals
+```{r}
+resids <- make_brms_dharma_res(abun_biogeo_model, integerResponse = FALSE)
+testUniformity(resids)
+plotResiduals(resids, form = factor(rep(1, nrow(predsum))))
+plotResiduals(resids, quantreg = TRUE)
+testDispersion(resids) # Dispersion plot (dispersion = variance/mean) - we assume mean and variance are the same, so we need to check
+```
+
+## Residuals look good. 
+
+## Chain checks
+```{r}
+abun_biogeo_model |> plot(ask = FALSE)
+# Trace plot
+mcmc_plot(abun_biogeo_model, type='trace')
+# Autocorrelation
+mcmc_plot(abun_biogeo_model, type='acf_bar')
+# Rhat - how well the chains converged
+mcmc_plot(abun_biogeo_model, type='rhat_hist')
+# Percentage effectives - needs to be greater than 0.5
+mcmc_plot(abun_biogeo_model, type='neff_hist')
+```
+
+
+## PP checks
+```{r}
+# Transform first
+pred <- posterior_predict(abun_biogeo_model)
+bayesplot::ppc_dens_overlay(y = log(predsum$No_Preds), 
+                            yrep = log(pred[1:200,]))
+```
+Posterior draws fit the data nicely:
+y = the observed data
+yrep = the predictive(posterior) distribution
+
+
+# Model investigation 
+## Conditional effects plot again to aid interpretation
+```{r}
+abun_biogeo_model |> conditional_effects() |> plot(ask = FALSE, points = FALSE) # Without raw data
+#abun_biogeo_model |> conditional_effects() |> plot(ask = FALSE, points = TRUE) # With raw data overplotted
+```
+
+
+## Summary table
+```{r}
+abun_biogeo_model |> 
+  as_draws_df() |>    # Extract draws
+  exp() |>            # Back transform
+  summarise_draws(median,
+                  HDInterval::hdi,
+                  rhat, ess_bulk, ess_tail,
+                  Pl = ~mean(.x <1),                       # Exceedence prob - on exp scale it's sig if doesn't cross 1
+                  Pg = ~mean(.x >1))|> 
+  as_tibble() |> 
+  mutate(median = round(median, 3),
+         lower = round(lower, 3),
+         upper = round(upper, 3))
+```
+
+
+
+## Save
+```{r}
+#save(abun_biogeo_model, file = "data/Rdata/abun_biogeo_model.Rda")
+```
+
+
+
