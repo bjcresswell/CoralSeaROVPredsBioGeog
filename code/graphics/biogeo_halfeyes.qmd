@@ -1,0 +1,367 @@
+---
+title: "Halfeye plots for abundance & sp rich"
+author: "Ben Cresswell"
+date: today
+date-format: "DD/MM/YYYY"
+---
+
+
+```{r}
+# Preliminaries
+#| label: setup
+#| include: false
+knitr::opts_chunk$set(cache.lazy = FALSE,
+                      tidy = "styler")
+options(tinytex.engine = "xelatex")
+```
+
+
+```{r}
+#rm(list=ls())
+source("code/packages.R")
+source("code/extras.R")
+source("code/helper_functions.R")
+load(file = "data/Rdata/sp_rich_asymp.Rdata")
+```
+
+
+Reproduce the density plots for both abundance and species richness and plot together
+
+# Abundance
+
+### dGBR
+```{r fig.width=40/25.4, fig.height=20/25.4}
+dGBR_abun_dens <- 
+abun_effects_draws |> 
+  filter(grepl("GBR", .variable)) |> 
+  ggplot(aes(x = .value, y = Variable, fill = Variable, group = Variable)) +
+  geom_vline(xintercept = 0, lty = 11) +
+  stat_halfeye(aes(fill = after_stat(ggdist::cut_cdf_qi(cdf,
+                                         .width = c(0.8,0.95,1),
+                                         labels = scales::percent_format()))),
+    .width = c(0.8, 0.95), point_interval = "median_qi", slab_colour = "black", slab_linewidth = 0.5,
+    point_size = 2) +
+  theme_bjc() +
+  scale_fill_manual(values = dGBR_pal) +
+  scale_y_discrete(name = "GBR dist\n(km)", position = "left", expand = c(0.08, 0)) +
+  annotate(geom = "text", label = "P =\n0.79", x = 0.31, y = 1.8, colour = "black", size = 2, family = "Arial", hjust = 0) +
+  scale_x_continuous(breaks = c(-0.5, 0, 0.5), limits = c(-0.85, 0.55), minor_breaks = NULL, expand = c(0, 0)) +
+  theme(#axis.title.y = element_blank(),
+        axis.title.x = element_blank(),
+        axis.title.y = element_text(colour = "black", size = 7, angle = 90, vjust = -10),     
+        axis.text.y = element_blank(),
+        axis.text.x = element_blank(),
+        plot.margin = unit(c(0,0,0,0), "mm")) +
+  guides(fill = "none") +
+  labs(x = "Scaled marginal effect")
+
+dGBR_abun_dens
+```
+
+
+### dCT
+```{r fig.width=40/25.4, fig.height=20/25.4}
+dCT_abun_dens <- 
+abun_effects_draws |> 
+  filter(grepl("CT", .variable)) |> 
+  ggplot(aes(x = .value, y = Variable, fill = Variable, group = Variable)) +
+  geom_vline(xintercept = 0, lty = 11) +
+  stat_halfeye(aes(fill = after_stat(ggdist::cut_cdf_qi(cdf,
+                                         .width = c(0.8,0.95,1),
+                                         labels = scales::percent_format()))),
+    .width = c(0.8, 0.95), point_interval = "median_qi", slab_colour = "black", slab_linewidth = 0.5,
+    point_size = 2) +
+  theme_bjc() +
+  scale_fill_manual(values = dCT_pal) +
+  scale_y_discrete(name = "CT dist\n(km)", position = "left", expand = c(0.08, 0)) +
+  annotate(geom = "text", label = "P =\n0.72", x = 0.31, y = 1.8, colour = "black", size = 2, family = "Arial", hjust = 0) +
+  scale_x_continuous(breaks = c(-0.5, 0, 0.5), limits = c(-0.85, 0.55), minor_breaks = NULL, expand = c(0, 0)) +
+  theme(axis.title.y = element_text(colour = "black", size = 7, angle = 90, vjust = -10),     
+        axis.title.x = element_blank(),
+        axis.text.y = element_blank(),
+        axis.text.x = element_blank(),
+        plot.margin = unit(c(0,0,0,0), "mm")) +
+  guides(fill = "none") +
+  labs(x = "Scaled marginal effect")
+
+dCT_abun_dens
+```
+
+
+### Reef_1_Area
+```{r fig.width=40/25.4, fig.height=20/25.4}
+Reef1Area_abun_dens <- 
+abun_effects_draws |> 
+  filter(grepl("Area", .variable)) |> 
+  ggplot(aes(x = .value, y = Variable, fill = Variable, group = Variable)) +
+  geom_vline(xintercept = 0, lty = 11) +
+  stat_halfeye(aes(fill = after_stat(ggdist::cut_cdf_qi(cdf,
+                                         .width = c(0.8,0.95,1),
+                                         labels = scales::percent_format()))),
+    .width = c(0.8, 0.95), point_interval = "median_qi", slab_colour = "black", slab_linewidth = 0.5,
+    point_size = 2) +
+  theme_bjc() +
+  scale_fill_manual(values = Reef_1_Area_pal) +
+  scale_y_discrete(name = "Reef size\n(kha)", position = "left", expand = c(0.08, 0)) +
+  annotate(geom = "text", label = "P =\n0.99", x = 0.31, y = 1.8, colour = "black", size = 2, family = "Arial", hjust = 0) +
+  scale_x_continuous(breaks = c(-0.5, 0, 0.5), limits = c(-0.85, 0.55), minor_breaks = NULL, expand = c(0, 0)) +
+  theme(axis.title.y = element_text(colour = "black", size = 7, angle = 90, vjust = -10),     
+        axis.title.x = element_blank(),
+        axis.text.y = element_blank(),
+        axis.text.x = element_blank(),
+        plot.margin = unit(c(0,0,0,0), "mm")) +
+  guides(fill = "none") +
+  labs(x = "Scaled marginal effect")
+
+Reef1Area_abun_dens
+```
+
+
+### Reef_100
+```{r fig.width=40/25.4, fig.height=20/25.4}
+Reef100_abun_dens <- 
+abun_effects_draws |> 
+  filter(grepl("100", .variable)) |> 
+  ggplot(aes(x = .value, y = Variable, fill = Variable, group = Variable)) +
+  geom_vline(xintercept = 0, lty = 11) +
+  stat_halfeye(aes(fill = after_stat(ggdist::cut_cdf_qi(cdf,
+                                         .width = c(0.8,0.95,1),
+                                         labels = scales::percent_format()))),
+    .width = c(0.8, 0.95), point_interval = "median_qi", slab_colour = "black", slab_linewidth = 0.5,
+    point_size = 2) +
+  theme_bjc() +
+  scale_fill_manual(values = Reef_100_pal) +
+  scale_y_discrete(name = "Reef w/in\n100km (kha)", position = "left", expand = c(0.08, 0)) +
+  annotate(geom = "text", label = "P =\n0.38", x = 0.31, y = 1.8, colour = "black", size = 2, family = "Arial", hjust = 0) +
+  scale_x_continuous(breaks = c(-0.5, 0, 0.5), limits = c(-0.85, 0.55), minor_breaks = NULL, expand = c(0, 0)) +
+  theme(axis.title.y = element_text(colour = "black", size = 7, angle = 90, vjust = -10),     
+        axis.title.x = element_text(colour = "black", size = 7),
+#        axis.title.x = element_blank(),
+        axis.text.y = element_blank(),
+        axis.text.x = element_text(colour = "black", size = 7),
+#        axis.text.x = element_blank(),
+        plot.margin = unit(c(0,0,0,0), "mm")) +
+  guides(fill = "none") +
+  labs(x = "Scaled abundance effect")
+
+Reef100_abun_dens
+```
+
+# Combine density plots for LHS of main figure
+```{r fig.width=42/25.4, fig.height=80/25.4}
+# Patchwork way - best overall layout:
+abun_plot_noborder <- 
+  dGBR_abun_dens /
+dCT_abun_dens /
+Reef1Area_abun_dens /
+Reef100_abun_dens
+
+# ALternatives:
+# Cowplot way:
+# plot_grid(dGBR_abun_dens, dCT_abun_dens, Reef1Area_abun_dens, Reef100_abun_dens, ncol = 1, rel_heights = c(1,1,1,1.4)) +
+#     theme(plot.background = element_rect(fill = "white", colour = "black"))
+# 
+
+# gridExtra way:
+# gridExtra::grid.arrange(dGBR_abun_dens, dCT_abun_dens, Reef1Area_abun_dens, Reef100_abun_dens, ncol = 1)
+
+## gpubr
+# ggarrange(dGBR_abun_dens, dCT_abun_dens, Reef1Area_abun_dens, Reef100_abun_dens, ncol = 1)
+
+## gtable - difficult to save
+# grid::grid.newpage()
+# rbind(ggplotGrob(dGBR_abun_dens), ggplotGrob(dCT_abun_dens), 
+#       ggplotGrob(Reef1Area_abun_dens), ggplotGrob(Reef100_abun_dens)) |> grid::grid.draw()
+
+
+abun_plot_main <- 
+  plot_grid(abun_plot_noborder) +
+  theme(panel.border = element_rect(fill = "transparent", colour = "black"))
+
+```
+
+
+
+
+# Species richness
+
+# Extract draws from model
+```{r}
+sr_effects_draws <- 
+sr_biogeo_mod_final |> 
+ gather_draws(`^b_.*`, regex=TRUE)  |> 
+  filter(!grepl("Intercept", .variable))   |> 
+  mutate(Variable = factor(case_when(grepl("CT", .variable) ~ "Distance\nCT (km)",
+                                     grepl("GBR", .variable) ~ "Distance to\n GBR (km)",
+                                     grepl("Reef_100", .variable) ~ "Reef w/in\n100km (kha)",
+                                     grepl("Reef_1_Area", .variable) ~ "Reef size\n(kha)")))
+```
+
+
+
+
+```{r fig.width=50/25.4, fig.height=80/25.4}
+#sr_effects_plot <- 
+  sr_effects_draws |> 
+  ggplot(aes(x = .value, y = Variable, fill = Variable, group = Variable)) +
+  geom_vline(xintercept = 0, lty = 11) +
+  stat_halfeye(.width = c(0.8, 0.95), point_interval = "median_hdi", slab_colour = "black", slab_linewidth = 0.5) +
+  theme_bjc() +
+  scale_fill_manual(values = cb_palette) +
+  scale_y_discrete(position = "left", expand = c(0.05, 0)) +
+  #annotate(geom = "text", label = "P=0.53", x = -0.4, y = 1, colour = "black", size = 2, family = "Arial", hjust = 0) +
+  scale_x_continuous(breaks = c(-0.5, 0, 0.5), limits = c(-0.9, 0.6)) +
+  theme(axis.title.y = element_blank(),
+        axis.title.x = element_text(colour = "black", size = 9),
+        #axis.text.y = element_blank(),
+        axis.text.x = element_text(colour = "black", size = 8),
+        strip.text = element_blank()) +
+  guides(fill = "none") +
+  labs(x = "Scaled marginal effect")
+```
+
+
+
+### dGBR
+```{r fig.width=40/25.4, fig.height=20/25.4}
+dGBR_sr_dens <- 
+sr_effects_draws |> 
+  filter(grepl("GBR", .variable)) |> 
+  ggplot(aes(x = .value, y = Variable, fill = Variable, group = Variable)) +
+  geom_vline(xintercept = 0, lty = 11) +
+  stat_halfeye(aes(fill = after_stat(ggdist::cut_cdf_qi(cdf,
+                                         .width = c(0.8,0.95,1),
+                                         labels = scales::percent_format()))),
+    .width = c(0.8, 0.95), point_interval = "median_qi", slab_colour = "black", slab_linewidth = 0.5,
+    point_size = 2) +
+  theme_bjc() +
+  scale_fill_manual(values = dGBR_pal) +
+  scale_y_discrete(position = "left", expand = c(0.08, 0)) +
+  annotate(geom = "text", label = " P =\n0.60", x = 0.31, y = 1.8, colour = "black", size = 2, family = "Arial", hjust = 0) +
+  scale_x_continuous(breaks = c(-0.5, 0, 0.5), limits = c(-0.85, 0.55), minor_breaks = NULL, expand = c(0, 0)) +
+  theme(axis.title.y = element_blank(),
+        axis.title.x = element_blank(),
+        axis.text.y = element_blank(),
+        axis.text.x = element_blank(),
+        plot.margin = unit(c(0,0,0,0), "mm")) +
+  guides(fill = "none") 
+
+dGBR_sr_dens
+```
+
+
+### dCT
+```{r fig.width=40/25.4, fig.height=20/25.4}
+dCT_sr_dens <- 
+sr_effects_draws |> 
+  filter(grepl("CT", .variable)) |> 
+  ggplot(aes(x = .value, y = Variable, fill = Variable, group = Variable)) +
+  geom_vline(xintercept = 0, lty = 11) +
+  stat_halfeye(aes(fill = after_stat(ggdist::cut_cdf_qi(cdf,
+                                         .width = c(0.8,0.95,1),
+                                         labels = scales::percent_format()))),
+    .width = c(0.8, 0.95), point_interval = "median_qi", slab_colour = "black", slab_linewidth = 0.5,
+    point_size = 2) +
+  theme_bjc() +
+  scale_fill_manual(values = dCT_pal) +
+  scale_y_discrete(position = "left", expand = c(0.08, 0)) +
+  annotate(geom = "text", label = "P =\n0.91", x = 0.31, y = 1.8, colour = "black", size = 2, family = "Arial", hjust = 0) +
+  scale_x_continuous(breaks = c(-0.5, 0, 0.5), limits = c(-0.85, 0.55), minor_breaks = NULL, expand = c(0, 0)) +
+  theme(axis.title.y = element_blank(),
+        axis.title.x = element_blank(),
+        axis.text.y = element_blank(),
+        axis.text.x = element_blank(),
+        plot.margin = unit(c(0,0,0,0), "mm")) +
+  guides(fill = "none") 
+
+dCT_sr_dens
+```
+
+
+### Reef_1_Area
+```{r fig.width=40/25.4, fig.height=20/25.4}
+Reef1Area_sr_dens <- 
+sr_effects_draws |> 
+  filter(grepl("Area", .variable)) |> 
+  ggplot(aes(x = .value, y = Variable, fill = Variable, group = Variable)) +
+  geom_vline(xintercept = 0, lty = 11) +
+  stat_halfeye(aes(fill = after_stat(ggdist::cut_cdf_qi(cdf,
+                                         .width = c(0.8,0.95,1),
+                                         labels = scales::percent_format()))),
+    .width = c(0.8, 0.95), point_interval = "median_qi", slab_colour = "black", slab_linewidth = 0.5,
+    point_size = 2) +
+  theme_bjc() +
+  scale_fill_manual(values = Reef_1_Area_pal) +
+  scale_y_discrete(position = "left", expand = c(0.08, 0)) +
+  annotate(geom = "text", label = "P =\n0.86", x = 0.31, y = 1.8, colour = "black", size = 2, family = "Arial", hjust = 0) +
+  scale_x_continuous(breaks = c(-0.5, 0, 0.5), limits = c(-0.85, 0.55), minor_breaks = NULL, expand = c(0, 0)) +
+  theme(axis.title.y = element_blank(),
+        axis.title.x = element_blank(),
+        axis.text.y = element_blank(),
+        axis.text.x = element_blank(),
+        plot.margin = unit(c(0,0,0,0), "mm")) +
+  guides(fill = "none") 
+
+Reef1Area_sr_dens
+```
+
+
+### Reef_100
+```{r fig.width=40/25.4, fig.height=25/25.4}
+Reef100_sr_dens <- 
+sr_effects_draws |> 
+  filter(grepl("100", .variable)) |> 
+  ggplot(aes(x = .value, y = Variable, fill = Variable, group = Variable)) +
+  geom_vline(xintercept = 0, lty = 11) +
+  stat_halfeye(aes(fill = after_stat(ggdist::cut_cdf_qi(cdf,
+                                         .width = c(0.8,0.95,1),
+                                         labels = scales::percent_format()))),
+    .width = c(0.8, 0.95), point_interval = "median_qi", slab_colour = "black", slab_linewidth = 0.5,
+    point_size = 2) +
+  theme_bjc() +
+  scale_fill_manual(values = Reef_100_pal) +
+  scale_y_discrete(position = "left", expand = c(0.08, 0)) +
+  annotate(geom = "text", label = "P =\n0.99", x = 0.31, y = 1.8, colour = "black", size = 2, family = "Arial", hjust = 0) +
+  scale_x_continuous(breaks = c(-0.5, 0, 0.5), limits = c(-0.85, 0.55), minor_breaks = NULL, expand = c(0, 0)) +
+  theme(axis.title.y = element_blank(),
+        axis.title.x = element_text(colour = "black", size = 7),
+#        axis.title.x = element_blank(),
+        axis.text.y = element_blank(),
+        axis.text.x = element_text(colour = "black", size = 7),
+#        axis.text.x = element_blank(),
+        plot.margin = unit(c(0,0,0,0), "mm")) +
+  guides(fill = "none") +
+  labs(x = "Scaled species richness effect")
+
+Reef100_sr_dens
+```
+
+# Combine density plots for LHS of main figure
+```{r fig.width=40/25.4, fig.height=80/25.4}
+sr_plot_noborder <- 
+dGBR_sr_dens /
+dCT_sr_dens /
+Reef1Area_sr_dens /
+Reef100_sr_dens 
+
+sr_plot_main <- 
+  plot_grid(sr_plot_noborder) +
+  theme(panel.border = element_rect(fill = "transparent", colour = "black"))
+  
+```
+
+
+```{r fig.width=80/25.4, fig.height=80/25.4}
+dens_plot_main <- 
+  plot_grid(abun_plot_main, sr_plot_main, rel_widths = c(1.1, 1))
+dens_plot_main
+```
+
+
+
+```{r}
+ggsave(filename = "output/biogeo_densplot_main.pdf", plot = dens_plot_main, height = 80, width = 80, device = cairo_pdf, units = "mm", dpi = 300)
+```
+
+
+
